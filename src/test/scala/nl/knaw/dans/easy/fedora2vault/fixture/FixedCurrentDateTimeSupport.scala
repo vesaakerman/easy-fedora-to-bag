@@ -13,16 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package nl.knaw.dans.easy
+package nl.knaw.dans.easy.fedora2vault.fixture
 
-import org.joda.time.format.{ DateTimeFormatter, ISODateTimeFormat }
-import org.joda.time.{ DateTime, DateTimeZone }
+import org.joda.time.{ DateTime, DateTimeUtils, DateTimeZone }
 
-package object fedora2vault {
+trait FixedCurrentDateTimeSupport {
 
-  type DatasetId = String
-  type Depositor = String
-
-  val dateTimeFormatter: DateTimeFormatter = ISODateTimeFormat.dateTime()
-  def now: String = DateTime.now(DateTimeZone.UTC).toString(dateTimeFormatter)
+  val nowYMD = "2020-02-02"
+  val nowUTC = s"${ nowYMD }T20:20:02.000Z"
+  /** Causes DateTime.now() to return a predefined value. */
+  DateTimeUtils.setCurrentMillisFixed(new DateTime(nowUTC).getMillis)
+  DateTimeZone.setDefault(DateTimeZone.UTC)
 }

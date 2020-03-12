@@ -15,12 +15,15 @@
  */
 package nl.knaw.dans.easy.fedora2vault
 
+import java.net.URL
+
 import better.files.File
 import better.files.File.root
+import com.yourmediashelf.fedora.client.FedoraCredentials
 import org.apache.commons.configuration.PropertiesConfiguration
 
 case class Configuration(version: String,
-                         // other configuration properties defined in application.properties
+                         fedoraCredentials: FedoraCredentials,
                         )
 
 object Configuration {
@@ -38,7 +41,11 @@ object Configuration {
 
     new Configuration(
       version = (home / "bin" / "version").contentAsString.stripLineEnd,
-      // read other properties defined in application.properties
+      fedoraCredentials = new FedoraCredentials(
+        new URL(properties.getString("fcrepo.url")),
+        properties.getString("fcrepo.user"),
+        properties.getString("fcrepo.password"),
+      )
     )
   }
 }

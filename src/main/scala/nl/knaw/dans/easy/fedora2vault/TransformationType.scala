@@ -13,16 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package nl.knaw.dans.easy
+package nl.knaw.dans.easy.fedora2vault
 
-import org.joda.time.format.{ DateTimeFormatter, ISODateTimeFormat }
-import org.joda.time.{ DateTime, DateTimeZone }
+object TransformationType extends Enumeration {
+  type TransformationType = Value
 
-package object fedora2vault {
-
-  type DatasetId = String
-  type Depositor = String
-
-  val dateTimeFormatter: DateTimeFormatter = ISODateTimeFormat.dateTime()
-  def now: String = DateTime.now(DateTimeZone.UTC).toString(dateTimeFormatter)
+  // @formatter:off
+  val SIMPLE: TransformationType = Value("simple")
+  // @formatter:on
 }

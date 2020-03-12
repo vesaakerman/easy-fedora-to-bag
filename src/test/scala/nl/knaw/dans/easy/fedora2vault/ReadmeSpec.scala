@@ -18,15 +18,17 @@ package nl.knaw.dans.easy.fedora2vault
 import java.io.ByteArrayOutputStream
 
 import better.files.File
-import nl.knaw.dans.easy.fedora2vault.fixture.CustomMatchers
-import org.scalatest._
+import nl.knaw.dans.easy.fedora2vault.fixture.{ CustomMatchers, FixedCurrentDateTimeSupport, TestSupportFixture }
 
-class ReadmeSpec extends FlatSpec with Matchers with CustomMatchers {
+import scala.xml.Properties
+
+class ReadmeSpec extends TestSupportFixture with CustomMatchers with FixedCurrentDateTimeSupport {
 
   private val configuration = Configuration(
     version = "my-version",
-    serverPort = 12345,
+    fedoraCredentials = null,
   )
+  Properties.setProp("user.home", "/home/vagrant")
   private val clo = new CommandLineOptions(Array[String](), configuration) {
     // avoids System.exit() in case of invalid arguments or "--help"
     override def verify(): Unit = {}
