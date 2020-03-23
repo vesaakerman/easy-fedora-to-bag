@@ -20,8 +20,8 @@ import nl.knaw.dans.lib.error._
 import nl.knaw.dans.lib.logging.DebugEnhancedLogging
 
 import scala.language.reflectiveCalls
+import scala.util.Try
 import scala.util.control.NonFatal
-import scala.util.{ Failure, Try }
 
 object Command extends App with DebugEnhancedLogging {
   type FeedBackMessage = String
@@ -38,12 +38,9 @@ object Command extends App with DebugEnhancedLogging {
     .doIfFailure { case NonFatal(e) => println(s"FAILED: ${ e.getMessage }") }
 
   private def runSubcommand(app: EasyFedora2vaultApp): Try[FeedBackMessage] = {
-//    commandLine.subcommand
-//      .collect {
-//      case subcommand1 @ subcommand.subcommand1 => // handle subcommand1
-//      case None => // handle command line without subcommands
-//      }
-//      .getOrElse(Failure(new IllegalArgumentException(s"Unknown command: ${ commandLine.subcommand }")))
-    ???
+    app.simpleTransform(
+      commandLine.datasetId.getOrElse(throw new IllegalArgumentException("no datasetId provided")),
+      commandLine.outputDir.getOrElse(throw new IllegalArgumentException("no outputDir provided")),
+    )
   }
 }

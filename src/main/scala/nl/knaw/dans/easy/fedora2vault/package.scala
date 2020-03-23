@@ -15,8 +15,15 @@
  */
 package nl.knaw.dans.easy
 
+import java.nio.file.Paths
+
+import better.files.StringExtensions
+import nl.knaw.dans.bag.DansBag
 import org.joda.time.format.{ DateTimeFormatter, ISODateTimeFormat }
 import org.joda.time.{ DateTime, DateTimeZone }
+
+import scala.util.Try
+import scala.xml.{ Node, PrettyPrinter, Utility }
 
 package object fedora2vault {
 
@@ -24,5 +31,26 @@ package object fedora2vault {
   type Depositor = String
 
   val dateTimeFormatter: DateTimeFormatter = ISODateTimeFormat.dateTime()
+
   def now: String = DateTime.now(DateTimeZone.UTC).toString(dateTimeFormatter)
+
+  val prologue = """<?xml version='1.0' encoding='UTF-8'?>"""
+
+  implicit class XmlExtensions(val elem: Node) extends AnyVal {
+
+    def serialize: String = {
+      val printer = new PrettyPrinter(160, 2)
+      val trimmed = Utility.trim(elem)
+      prologue + "\n" + printer.format(trimmed)
+    }
+  }
+  implicit class BagExtensions(val bag: DansBag) extends AnyVal {
+    def addMetadataFile(content: Node, target: String): Try[Any] = {
+      addMetadataFile(content.serialize, target)
+    }
+
+    def addMetadataFile(content: String, target: String): Try[Any] = {
+      bag.addTagFile(content.inputStream, Paths.get(s"metadata/$target"))
+    }
+  }
 }
