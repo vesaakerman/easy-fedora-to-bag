@@ -21,20 +21,14 @@ import better.files.File
 import com.yourmediashelf.fedora.client.FedoraClient
 import nl.knaw.dans.bag.v0.DansV0Bag
 import nl.knaw.dans.easy.fedora2vault.Command.FeedBackMessage
-import nl.knaw.dans.easy.fedora2vault.FoXml._
+import nl.knaw.dans.easy.fedora2vault.FoXml.{ getEmd, _ }
 import resource.{ ManagedResource, managed }
 
-import scala.util.Try
-import scala.xml.XML
+import scala.util.{ Failure, Success, Try }
+import scala.xml.{ Node, XML }
 
 class EasyFedora2vaultApp(configuration: Configuration) {
   private lazy val fedoraClient = new FedoraClient(configuration.fedoraCredentials)
-
-  protected def getFoXmlInputStream(datasetId: DatasetId): ManagedResource[InputStream] = {
-    // copy of https://github.com/DANS-KNAW/easy-export-dataset/blob/6e656c6e6dad19bdea70694d63ce929ab7b0ad2b/src/main/scala/nl.knaw.dans.easy.export/FedoraProvider.scala#L55-L58
-    managed(FedoraClient.getObjectXML(datasetId).execute(fedoraClient))
-      .flatMap(response => managed(response.getEntityInputStream))
-  }
 
   def simpleTransform(datasetId: DatasetId, outputDir: File): Try[FeedBackMessage] = {
     for {
@@ -42,8 +36,47 @@ class EasyFedora2vaultApp(configuration: Configuration) {
       depositor <- getOwner(foXml)
       bag <- DansV0Bag.empty(outputDir).map(_.withEasyUserAccount(depositor))
       emd <- getEmd(foXml)
-      _ <- bag.addMetadataFile(emd, "dataset.xml")
+      _ <- bag.addMetadata(emd, "emd.xml")
+      _ <- getDdm(foXml)
+        .map(bag.addMetadata(_, "ddm.xml")).getOrElse(Success(())) // TODO EASY-2683
+      _ <- getAgreementsXml(foXml)
+        .map(bag.addMetadata(_, "agreements.xml")).getOrElse(Success(())) // TODO ?
+      _ <- getMessageFromDepositor(foXml)
+        .map(bag.addMetadata(_, "message-from-depositor.txt")).getOrElse(Success(())) // TODO EMD/other/remark?
+      _ <- getFilesXml(foXml)
+        .map(bag.addMetadata(_, "files.xml")).getOrElse(Success(())) // TODO EASY-2678
+      _ <- getAditionalLicense(foXml)
+        .map(addMetadata(bag, "ADDITIONAL_LICENSE")).getOrElse(Success(()))
+      _ <- getDatasetLicense(foXml)
+        .map(addMetadata(bag, "DATASET_LICENSE")).getOrElse(Success(()))
       _ <- bag.save()
-    } yield ("???") // TODO what?
+      _ = getManifest(foXml).map(compareManifest(bag))
+    } yield "???" // TODO what?
+  }
+
+  protected def getFoXmlInputStream(datasetId: DatasetId): ManagedResource[InputStream] = {
+    // copy of https://github.com/DANS-KNAW/easy-export-dataset/blob/6e656c6e6dad19bdea70694d63ce929ab7b0ad2b/src/main/scala/nl.knaw.dans.easy.export/FedoraProvider.scala#L55-L58
+    managed(FedoraClient.getObjectXML(datasetId).execute(fedoraClient))
+      .flatMap(response => managed(response.getEntityInputStream))
+  }
+
+  private def addMetadata(bag: DansV0Bag, defaultFileName: String)(streamRoot: Node) = {
+
+    def execute(id: String): Try[Any] = {
+      val fileName = getLabel(streamRoot).getOrElse(defaultFileName)
+      getFoXmlInputStream(id)
+        .map(bag.addMetadata(_, fileName))
+        .tried.flatten
+    }
+
+    getLocation(streamRoot)
+      .map(execute)
+      .getOrElse(Failure(new Exception(s"No <contentLocation REF='...'> for $defaultFileName")))
+  }
+
+  private def compareManifest(bag: DansV0Bag)(manifest: String): Try[Unit] = {
+    // TODO EASY-2678
+    val plm = bag.payloadManifests // or sha's from fedora?
+    Success(())
   }
 }

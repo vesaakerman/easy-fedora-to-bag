@@ -15,6 +15,7 @@
  */
 package nl.knaw.dans.easy
 
+import java.io.InputStream
 import java.nio.file.Paths
 
 import better.files.StringExtensions
@@ -45,12 +46,16 @@ package object fedora2vault {
     }
   }
   implicit class BagExtensions(val bag: DansBag) extends AnyVal {
-    def addMetadataFile(content: Node, target: String): Try[Any] = {
-      addMetadataFile(content.serialize, target)
+    def addMetadata(content: Node, target: String): Try[Any] = {
+      addMetadata(content.serialize, target)
     }
 
-    def addMetadataFile(content: String, target: String): Try[Any] = {
+    def addMetadata(content: String, target: String): Try[Any] = {
       bag.addTagFile(content.inputStream, Paths.get(s"metadata/$target"))
+    }
+
+    def addMetadata(content: InputStream, target: String): Try[Any] = {
+      bag.addTagFile(content, Paths.get(s"metadata/$target"))
     }
   }
 }

@@ -7,7 +7,7 @@ import org.scalamock.scalatest.MockFactory
 import resource.{ ManagedResource, managed }
 
 import scala.util.Success
-import scala.xml.Elem
+import scala.xml.{ Elem, XML }
 
 class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport {
 
@@ -17,7 +17,7 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
     testDir.createDirectories()
   }
 
-  private val nameSpaceRegExp = """ xmlns:[a-z]+="[^"]*"""" // they have a variable order
+  private val nameSpaceRegExp = """ xmlns:[a-z]+="[^"]*"""" // these attributes have a variable order
 
   "simpleTransform" should "produce a bag with EMD" in {
     val emd = <emd:easymetadata xmlns:emd="http://easy.dans.knaw.nl/easy/easymetadata/" xmlns:eas="http://easy.dans.knaw.nl/easy/easymetadata/eas/" xmlns:dct="http://purl.org/dc/terms/" xmlns:dc="http://purl.org/dc/elements/1.1/" emd:version="0.1">
@@ -29,8 +29,22 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
     getApp(createFoXml(emd, "easyadmin"))
       .simpleTransform("easy-dataset:123", testDir / "bag") shouldBe Success("???")
     (testDir / "bag" / "bag-info.txt").contentAsString should startWith("EASY-User-Account: easyadmin")
-    (testDir / "bag" / "metadata" / "dataset.xml").contentAsString.replaceAll(nameSpaceRegExp, "") shouldBe
+    (testDir / "bag" / "metadata" / "emd.xml").contentAsString.replaceAll(nameSpaceRegExp, "") shouldBe
       emd.serialize.replaceAll(nameSpaceRegExp, "")
+  }
+
+  it should "DepositApi" in {
+    getApp(readFoXml("DepositApi.xml"))
+      .simpleTransform("easy-dataset:123", testDir / "bag") shouldBe Success("???")
+  }
+
+  it should "TalkOfEurope" in {
+    getApp(readFoXml("TalkOfEurope.xml"))
+      .simpleTransform("easy-dataset:123", testDir / "bag") shouldBe Success("???")
+  }
+
+  private def readFoXml (sample: String) ={
+    XML.load(new FileInputStream(s"src/test/resources/sample-foxml/$sample"))
   }
 
   private def createFoXml(emd: Elem, owner: DatasetId) = {
