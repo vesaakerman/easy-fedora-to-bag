@@ -1,6 +1,6 @@
 package nl.knaw.dans.easy.fedora2vault
 
-import scala.util.{ Success, Try }
+import scala.util.Try
 import scala.xml.Node
 
 object FoXml {
@@ -26,11 +26,11 @@ object FoXml {
 
   def getRelsExt(foXml: Node): Try[Node] = getStream("RELS-EXT", "RDF", foXml)
 
-  def getOwner(foXml: Node): Try[String] = {
-    // <foxml:objectProperties>
-    //   <foxml:property NAME="info:fedora/fedora-system:def/model#ownerId" VALUE="???"/>
-    // <foxml:objectProperties>
-    (foXml \ "objectProperties" \ "property").text // TODO
-    Success("TODO")
+  def getOwner(foXml: Node): Try[String] = Try {
+    (foXml \ "objectProperties" \ "property")
+      .filter(_.attribute("NAME").exists(_.map(_.text).exists(_.endsWith("#ownerId"))))
+      .flatMap(_.attribute("VALUE"))
+      .flatten.headOption.map(_.text)
+      .getOrElse(throw new Exception("""FoXml has no <foxml:property NAME="info:fedora/fedora-system:def/model#ownerId" VALUE="???"/>"""))
   }
 }
