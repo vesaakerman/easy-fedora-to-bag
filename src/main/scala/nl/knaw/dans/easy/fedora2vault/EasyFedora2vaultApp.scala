@@ -39,11 +39,10 @@ class EasyFedora2vaultApp(configuration: Configuration) {
   def simpleTransform(datasetId: DatasetId, outputDir: File): Try[FeedBackMessage] = {
     for {
       foXml <- getFoXmlInputStream(datasetId).map(XML.load).tried
-      bag <- DansV0Bag.empty(outputDir)
       depositor <- getOwner(foXml)
-      _ = bag.withEasyUserAccount(depositor)
-      node <- getEmd(foXml)
-      _ <- bag.addMetadataFile(node, "dataset.xml")
+      bag <- DansV0Bag.empty(outputDir).map(_.withEasyUserAccount(depositor))
+      emd <- getEmd(foXml)
+      _ <- bag.addMetadataFile(emd, "dataset.xml")
       _ <- bag.save()
     } yield ("???") // TODO what?
   }
