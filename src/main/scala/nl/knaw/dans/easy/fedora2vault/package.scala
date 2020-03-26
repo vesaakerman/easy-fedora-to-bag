@@ -45,13 +45,10 @@ package object fedora2vault {
       prologue + "\n" + printer.format(trimmed)
     }
   }
+
   implicit class BagExtensions(val bag: DansBag) extends AnyVal {
     def addMetadata(content: Node, target: String): Try[Any] = {
-      addMetadata(content.serialize, target)
-    }
-
-    def addMetadata(content: String, target: String): Try[Any] = {
-      bag.addTagFile(content.inputStream, Paths.get(s"metadata/$target"))
+      bag.addTagFile(content.serialize.inputStream, Paths.get(s"metadata/$target"))
     }
 
     def addMetadata(content: InputStream, target: String): Try[Any] = {
