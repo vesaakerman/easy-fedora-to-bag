@@ -38,24 +38,41 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
     (testDir / "fo.xml").write(createFoXml(emd, "easyadmin").serialize)
 
     new MockedApp(testDir / "fo.xml")
-      .simpleTransform("easy-dataset:123", testDir / "bag") shouldBe Success("???")
+      .simpleTransform("easy-dataset:17", testDir / "bag") shouldBe Success("???")
+
     (testDir / "bag" / "bag-info.txt").contentAsString should startWith("EASY-User-Account: easyadmin")
     (testDir / "bag" / "metadata" / "emd.xml").contentAsString.replaceAll(nameSpaceRegExp, "") shouldBe
       emd.serialize.replaceAll(nameSpaceRegExp, "")
   }
 
   it should "process DepositApi" in {
-    new MockedApp(samples / "DepositApi.xml")
-      .simpleTransform("easy-dataset:123", testDir / "bag") shouldBe Success("???")
+    (testDir / "additional-license").write("rabarbera")
+    (testDir / "dataset-license").write("rabarbera")
+
+    new MockedApp(samples / "DepositApi.xml", testDir / "additional-license", testDir / "dataset-license")
+      .simpleTransform("easy-dataset:17", testDir / "bag") shouldBe Success("???")
+
     (testDir / "bag" / "metadata").list.toSeq.map(_.name)
-      .sortBy(identity) shouldBe Seq("amd.xml", "dataset.xml", "depositor-info", "emd.xml", "files.xml")
+      .sortBy(identity) shouldBe Seq("DANS_Licence_UK.pdf", "amd.xml", "dataset.xml", "depositor-info", "emd.xml", "files.xml", "license.pdf")
   }
 
   it should "process TalkOfEurope" in {
-    new MockedApp(samples / "TalkOfEurope.xml")
-      .simpleTransform("easy-dataset:123", testDir / "bag") shouldBe Success("???")
+    (testDir / "dataset-license").write("rabarbera")
+
+    new MockedApp(samples / "TalkOfEurope.xml", testDir / "dataset-license")
+      .simpleTransform("easy-dataset:12", testDir / "bag") shouldBe Success("???")
+
     (testDir / "bag" / "metadata").list.toSeq.map(_.name)
-      .sortBy(identity) shouldBe Seq("amd.xml","emd.xml")
+      .sortBy(identity) shouldBe Seq("amd.xml", "emd.xml", "license.pdf")
+  }
+
+  it should "process streaming" in {
+
+    new MockedApp(samples / "streaming.xml")
+      .simpleTransform("easy-dataset:13", testDir / "bag") shouldBe Success("???")
+
+    (testDir / "bag" / "metadata").list.toSeq.map(_.name)
+      .sortBy(identity) shouldBe Seq("amd.xml", "emd.xml")
   }
 
   private def createFoXml(emd: Elem, owner: DatasetId) = {
