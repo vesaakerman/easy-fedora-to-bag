@@ -43,7 +43,7 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
       .simpleTransform("easy-dataset:123", testDir / "bag") shouldBe Success("???")
   }
 
-  private def readFoXml (sample: String) ={
+  private def readFoXml(sample: String) = {
     XML.load(new FileInputStream(s"src/test/resources/sample-foxml/$sample"))
   }
 

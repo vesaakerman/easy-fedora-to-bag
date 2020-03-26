@@ -37,15 +37,19 @@ class EasyFedora2vaultApp(configuration: Configuration) {
       bag <- DansV0Bag.empty(outputDir).map(_.withEasyUserAccount(depositor))
       emd <- getEmd(foXml)
       _ <- bag.addMetadata(emd, "emd.xml")
+      amd <- getEmd(foXml)
+      _ <- bag.addMetadata(amd, "amd.xml")
       _ <- getDdm(foXml)
-        .map(bag.addMetadata(_, "ddm.xml")).getOrElse(Success(())) // TODO EASY-2683
+        .map(bag.addMetadata(_, "dataset.xml")).getOrElse(Success(())) // TODO EASY-2683
       _ <- getAgreementsXml(foXml)
-        .map(bag.addMetadata(_, "depositor-info/agreements.xml")).getOrElse(Success(())) // TODO ?
+        .map(bag.addMetadata(_, "depositor-info/agreements.xml")).getOrElse(Success(()))
       _ <- getMessageFromDepositor(foXml)
-        .map(bag.addMetadata(_, "message-from-depositor.txt")).getOrElse(Success(())) // TODO EMD/other/remark?
+        .map(bag.addMetadata(_, "depositor-info/message-from-depositor.txt")).getOrElse(Success(())) // TODO EMD/other/remark?
       _ <- getFilesXml(foXml)
         .map(bag.addMetadata(_, "files.xml")).getOrElse(Success(())) // TODO EASY-2678
-      _ <- getAditionalLicense(foXml)
+
+      // TODO not mentioned in https://github.com/DANS-KNAW/dans-bagit-profile/blob/master/versions/0.0.0.md#3-metadata-requirements
+      _ <- getAdittionalLicense(foXml)
         .map(addMetadata(bag, "ADDITIONAL_LICENSE")).getOrElse(Success(()))
       _ <- getDatasetLicense(foXml)
         .map(addMetadata(bag, "DATASET_LICENSE")).getOrElse(Success(()))
