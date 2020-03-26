@@ -38,7 +38,7 @@ object FoXml {
 
   def getManifest(foXml: Node): Option[String] = getStreamRoot("manifest-sha1.txt", foXml).flatMap(getLocation)
 
-  def getAdittionalLicense(foXml: Node): Option[Node] = getStreamRoot("ADDITIONAL_LICENSE", foXml)
+  def getAdditionalLicense(foXml: Node): Option[Node] = getStreamRoot("ADDITIONAL_LICENSE", foXml)
 
   // TODO which version(s)?
   def getDatasetLicense(foXml: Node): Option[Node] = getStreamRoot("DATASET_LICENSE", foXml)

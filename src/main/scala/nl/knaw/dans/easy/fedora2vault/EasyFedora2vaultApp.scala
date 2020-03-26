@@ -46,7 +46,7 @@ class EasyFedora2vaultApp(configuration: Configuration) {
         .map(bag.addMetadata(_, "files.xml")).getOrElse(Success(())) // TODO EASY-2678
 
       // TODO not mentioned in https://github.com/DANS-KNAW/dans-bagit-profile/blob/master/versions/0.0.0.md#3-metadata-requirements
-      _ <- getAdittionalLicense(foXml)
+      _ <- getAdditionalLicense(foXml)
         .map(addMetadata(bag, "ADDITIONAL_LICENSE")).getOrElse(Success(()))
       _ <- getDatasetLicense(foXml)
         .map(addMetadata(bag, "DATASET_LICENSE")).getOrElse(Success(()))
