@@ -1,13 +1,14 @@
 package nl.knaw.dans.easy.fedora2vault
 
-import java.io.{ FileInputStream, InputStream }
+import java.io.FileInputStream
 
+import better.files.File
 import nl.knaw.dans.easy.fedora2vault.fixture.{ FileSystemSupport, TestSupportFixture }
 import org.scalamock.scalatest.MockFactory
-import resource.{ ManagedResource, managed }
+import resource.managed
 
 import scala.util.Success
-import scala.xml.{ Elem, XML }
+import scala.xml.Elem
 
 class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport {
 
@@ -18,6 +19,15 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
   }
 
   private val nameSpaceRegExp = """ xmlns:[a-z]+="[^"]*"""" // these attributes have a variable order
+  private val samples = File("src/test/resources/sample-foxml")
+
+  private class MockedApp(expectedObjects: File*) extends EasyFedora2vaultApp(null) {
+    override lazy val fedoraIO: FedoraIO = mock[FedoraIO]
+    expectedObjects.foreach(file =>
+      (fedoraIO.getObject(_: String)) expects * once() returning
+        managed(new FileInputStream(file.toJava))
+    )
+  }
 
   "simpleTransform" should "produce a bag with EMD" in {
     val emd = <emd:easymetadata xmlns:emd="http://easy.dans.knaw.nl/easy/easymetadata/" xmlns:eas="http://easy.dans.knaw.nl/easy/easymetadata/eas/" xmlns:dct="http://purl.org/dc/terms/" xmlns:dc="http://purl.org/dc/elements/1.1/" emd:version="0.1">
@@ -25,26 +35,27 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
                       <dc:title>Incomplete metadata</dc:title>
                   </emd:title>
               </emd:easymetadata>
+    (testDir / "fo.xml").write(createFoXml(emd, "easyadmin").serialize)
 
-    getApp(createFoXml(emd, "easyadmin"))
+    new MockedApp(testDir / "fo.xml")
       .simpleTransform("easy-dataset:123", testDir / "bag") shouldBe Success("???")
     (testDir / "bag" / "bag-info.txt").contentAsString should startWith("EASY-User-Account: easyadmin")
     (testDir / "bag" / "metadata" / "emd.xml").contentAsString.replaceAll(nameSpaceRegExp, "") shouldBe
       emd.serialize.replaceAll(nameSpaceRegExp, "")
   }
 
-  it should "DepositApi" in {
-    getApp(readFoXml("DepositApi.xml"))
+  it should "process DepositApi" in {
+    new MockedApp(samples / "DepositApi.xml")
       .simpleTransform("easy-dataset:123", testDir / "bag") shouldBe Success("???")
+    (testDir / "bag" / "metadata").list.toSeq.map(_.name)
+      .sortBy(identity) shouldBe Seq("amd.xml", "dataset.xml", "depositor-info", "emd.xml", "files.xml")
   }
 
-  it should "TalkOfEurope" in {
-    getApp(readFoXml("TalkOfEurope.xml"))
+  it should "process TalkOfEurope" in {
+    new MockedApp(samples / "TalkOfEurope.xml")
       .simpleTransform("easy-dataset:123", testDir / "bag") shouldBe Success("???")
-  }
-
-  private def readFoXml(sample: String) = {
-    XML.load(new FileInputStream(s"src/test/resources/sample-foxml/$sample"))
+    (testDir / "bag" / "metadata").list.toSeq.map(_.name)
+      .sortBy(identity) shouldBe Seq("amd.xml","emd.xml")
   }
 
   private def createFoXml(emd: Elem, owner: DatasetId) = {
@@ -69,14 +80,5 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
             </foxml:datastreamVersion>
         </foxml:datastream>
     </foxml:digitalObject>
-  }
-
-  private def getApp(foXml: Elem): EasyFedora2vaultApp = {
-    (testDir / "fo.xml").write(foXml.serialize)
-    new EasyFedora2vaultApp(mock[Configuration]) {
-      override def getFoXmlInputStream(datasetId: DatasetId): ManagedResource[InputStream] = {
-        managed(new FileInputStream((testDir / "fo.xml").toString()))
-      }
-    }
   }
 }

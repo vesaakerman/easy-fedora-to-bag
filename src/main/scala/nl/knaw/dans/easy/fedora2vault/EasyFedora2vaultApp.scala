@@ -15,24 +15,21 @@
  */
 package nl.knaw.dans.easy.fedora2vault
 
-import java.io.InputStream
-
 import better.files.File
 import com.yourmediashelf.fedora.client.FedoraClient
 import nl.knaw.dans.bag.v0.DansV0Bag
 import nl.knaw.dans.easy.fedora2vault.Command.FeedBackMessage
 import nl.knaw.dans.easy.fedora2vault.FoXml.{ getEmd, _ }
-import resource.{ ManagedResource, managed }
 
 import scala.util.{ Failure, Success, Try }
 import scala.xml.{ Node, XML }
 
 class EasyFedora2vaultApp(configuration: Configuration) {
-  private lazy val fedoraClient = new FedoraClient(configuration.fedoraCredentials)
+  lazy val fedoraIO = new FedoraIO(new FedoraClient(configuration.fedoraCredentials))
 
   def simpleTransform(datasetId: DatasetId, outputDir: File): Try[FeedBackMessage] = {
     for {
-      foXml <- getFoXmlInputStream(datasetId).map(XML.load).tried
+      foXml <- fedoraIO.getObject(datasetId).map(XML.load).tried
       depositor <- getOwner(foXml)
       bag <- DansV0Bag.empty(outputDir).map(_.withEasyUserAccount(depositor))
       emd <- getEmd(foXml)
@@ -58,17 +55,11 @@ class EasyFedora2vaultApp(configuration: Configuration) {
     } yield "???" // TODO what?
   }
 
-  protected def getFoXmlInputStream(datasetId: DatasetId): ManagedResource[InputStream] = {
-    // copy of https://github.com/DANS-KNAW/easy-export-dataset/blob/6e656c6e6dad19bdea70694d63ce929ab7b0ad2b/src/main/scala/nl.knaw.dans.easy.export/FedoraProvider.scala#L55-L58
-    managed(FedoraClient.getObjectXML(datasetId).execute(fedoraClient))
-      .flatMap(response => managed(response.getEntityInputStream))
-  }
-
   private def addMetadata(bag: DansV0Bag, defaultFileName: String)(streamRoot: Node) = {
 
     def execute(id: String): Try[Any] = {
       val fileName = getLabel(streamRoot).getOrElse(defaultFileName)
-      getFoXmlInputStream(id)
+      fedoraIO.getObject(id)
         .map(bag.addMetadata(_, fileName))
         .tried.flatten
     }
