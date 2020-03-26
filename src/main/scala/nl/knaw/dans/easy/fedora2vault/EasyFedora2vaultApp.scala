@@ -40,7 +40,7 @@ class EasyFedora2vaultApp(configuration: Configuration) {
       _ <- getDdm(foXml)
         .map(bag.addMetadata(_, "ddm.xml")).getOrElse(Success(())) // TODO EASY-2683
       _ <- getAgreementsXml(foXml)
-        .map(bag.addMetadata(_, "agreements.xml")).getOrElse(Success(())) // TODO ?
+        .map(bag.addMetadata(_, "depositor-info/agreements.xml")).getOrElse(Success(())) // TODO ?
       _ <- getMessageFromDepositor(foXml)
         .map(bag.addMetadata(_, "message-from-depositor.txt")).getOrElse(Success(())) // TODO EMD/other/remark?
       _ <- getFilesXml(foXml)

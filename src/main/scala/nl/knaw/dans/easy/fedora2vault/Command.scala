@@ -39,8 +39,8 @@ object Command extends App with DebugEnhancedLogging {
 
   private def runSubcommand(app: EasyFedora2vaultApp): Try[FeedBackMessage] = {
     app.simpleTransform(
-      commandLine.datasetId.getOrElse(throw new IllegalArgumentException("no datasetId provided")),
-      commandLine.outputDir.getOrElse(throw new IllegalArgumentException("no outputDir provided")),
+      commandLine.datasetId(),
+      commandLine.outputDir(),
     )
   }
 }
