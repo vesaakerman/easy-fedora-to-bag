@@ -47,6 +47,8 @@ package object fedora2vault {
   }
 
   implicit class BagExtensions(val bag: DansBag) extends AnyVal {
+    // variant of https://github.com/DANS-KNAW/easy-deposit-api/blob/ff109d27d2f2548c9e053c34d41627a539a381d9/src/main/scala/nl.knaw.dans.easy.deposit/package.scala#L38-L46
+
     def addMetadata(content: Node, target: String): Try[Any] = {
       bag.addTagFile(content.serialize.inputStream, Paths.get(s"metadata/$target"))
     }

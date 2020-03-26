@@ -67,7 +67,6 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
   }
 
   it should "process streaming" in {
-
     new MockedApp(samples / "streaming.xml")
       .simpleTransform("easy-dataset:13", testDir / "bag") shouldBe Success("???")
 
