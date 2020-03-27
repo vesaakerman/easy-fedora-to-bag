@@ -1,3 +1,18 @@
+/**
+ * Copyright (C) 2020 DANS - Data Archiving and Networked Services (info@dans.knaw.nl)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package nl.knaw.dans.easy.fedora2vault
 
 import java.io.FileInputStream
@@ -26,7 +41,7 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
     (fedoraProvider.getObject(_: String)) expects * once() returning
       managed(new FileInputStream(expectedObjects.head.toJava))
     expectedObjects.tail.foreach(file =>
-      (fedoraProvider.disseminateDatastream(_: String, _:String)) expects (*,*) once() returning
+      (fedoraProvider.disseminateDatastream(_: String, _: String)) expects(*, *) once() returning
         managed(new FileInputStream(file.toJava))
     )
   }
@@ -50,13 +65,13 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
   it should "process DepositApi" in {
     new MockedApp(
       samples / "DepositApi.xml",
-      (testDir / "agreement.xml").write("lalala"),
-      (testDir / "additional-license").write("rabarbera"),
+      (testDir / "additional-license").write("lalala"),
       (testDir / "dataset-license").write("blablabla"),
+      (testDir / "manifest-sha1.txt").write("rabarbera"),
     ).simpleTransform("easy-dataset:17", testDir / "bag") shouldBe Success("???")
 
     (testDir / "bag" / "metadata" / "depositor-info/depositor-agreement.pdf").contentAsString shouldBe "blablabla"
-    (testDir / "bag" / "metadata" / "license.pdf").contentAsString shouldBe "rabarbera"
+    (testDir / "bag" / "metadata" / "license.pdf").contentAsString shouldBe "lalala"
     (testDir / "bag" / "metadata").list.toSeq.map(_.name).sortBy(identity) shouldBe
       Seq("amd.xml", "dataset.xml", "depositor-info", "emd.xml", "files.xml", "license.pdf")
   }
@@ -98,6 +113,16 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
                 <foxml:contentDigest TYPE="SHA-1" DIGEST="b7f5d6b48483f1f9038e220baae4ec24f768b19a"/>
                 <foxml:xmlContent>
                     { emd }
+                </foxml:xmlContent>
+            </foxml:datastreamVersion>
+        </foxml:datastream>
+        <foxml:datastream ID="AMD" STATE="A" CONTROL_GROUP="X" VERSIONABLE="false">
+            <foxml:datastreamVersion ID="AMD.0" LABEL="Administrative metadata for this dataset" CREATED="2020-03-17T10:24:17.268Z" MIMETYPE="text/xml" SIZE="4807">
+                <foxml:xmlContent>
+                    <damd:administrative-md xmlns:damd="http://easy.dans.knaw.nl/easy/dataset-administrative-metadata/" version="0.1">
+                        <datasetState>SUBMITTED</datasetState>
+                        <previousState>DRAFT</previousState>
+                    </damd:administrative-md>
                 </foxml:xmlContent>
             </foxml:datastreamVersion>
         </foxml:datastream>

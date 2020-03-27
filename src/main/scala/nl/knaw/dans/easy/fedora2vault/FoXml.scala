@@ -1,3 +1,18 @@
+/**
+ * Copyright (C) 2020 DANS - Data Archiving and Networked Services (info@dans.knaw.nl)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package nl.knaw.dans.easy.fedora2vault
 
 import scala.util.Try
@@ -16,7 +31,7 @@ object FoXml {
       .last
   }
 
-  def getStreamRoot(streamId: String, foXml: Node): Option[Node] = {
+  private def getStreamRoot(streamId: String, foXml: Node): Option[Node] = {
     (foXml \ "datastream")
       .theSeq
       .filter(n => n \@ "ID" == streamId)
@@ -31,43 +46,32 @@ object FoXml {
 
   // TODO EASY_ITEM_CONTAINER_MD in http://deasy.dans.knaw.nl:8080/fedora/objects/easy-dataset:10/objectXML
 
-  // TODO distinguish between not found and other errors?
   def getDdm(foXml: Node): Option[Node] = getStream("dataset.xml", "DDM", foXml).toOption
-
-  def getManagedStream(id: String, foXml: Node): Option[Node] = getStream(id, "agreements", foXml).toOption
 
   def getFilesXml(foXml: Node): Option[Node] = getStream("files.xml", "file", foXml).toOption
 
-  def getManifest(foXml: Node): Option[String] = getStreamRoot("manifest-sha1.txt", foXml).flatMap(getLocation)
+  def getAgreementsXml(foXml: Node): Option[Node] = getStream("agreements.xml", "file", foXml).toOption
 
-  case class StreamInfo(location: String, extension: String)
-
-  def getStreamInfo(root: Node): Option[StreamInfo] = {
-      for {
-        location <- getLocation(root)
-        fileName <- getLabel(root)
-        extension = fileName.split("[.]").last
-      } yield StreamInfo(location, extension)
+  def getManifest(foXml: Node): Option[String] = {
+    val streamId = "manifest-sha1.txt"
+    getStreamRoot(streamId, foXml)
+      .map(_ => streamId)
   }
 
   def getMessageFromDepositor(foXml: Node): Option[Node] = getStreamRoot("message-from-depositor.txt", foXml)
 
-  /**
-   * @param node root of a stream
-   * @return fedora-id
-   */
-  private def getLocation(node: Node): Option[String] = {
-    (node \\ "contentLocation")
-      .flatMap(_.attribute("REF"))
-      .flatten.headOption.map(_.text) // TODO head or last?
+  def managedStreamLabel(foXml: Node, id: String): Option[String] = {
+    getStreamRoot(id, foXml)
+      .withFilter(controlGroup(_).contains("M"))
+      .flatMap(getLabel)
   }
 
-  /**
-   * @param node root of a stream
-   * @return file name
-   */
-  def getLabel(node: Node): Option[String] = {
-    (node \ "datastreamVersion")
+  private def controlGroup(streamRoot: Node): Option[String] = {
+    streamRoot.attribute("CONTROL_GROUP").map(_.text)
+  }
+
+  def getLabel(streamRoot: Node): Option[String] = {
+    (streamRoot \ "datastreamVersion")
       .flatMap(_.attribute("LABEL"))
       .flatten.headOption.map(_.text)
   }
