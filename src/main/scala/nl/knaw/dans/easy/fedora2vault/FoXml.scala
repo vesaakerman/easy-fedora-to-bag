@@ -16,7 +16,7 @@ object FoXml {
       .last
   }
 
-  private def getStreamRoot(streamId: String, foXml: Node) = {
+  def getStreamRoot(streamId: String, foXml: Node): Option[Node] = {
     (foXml \ "datastream")
       .theSeq
       .filter(n => n \@ "ID" == streamId)
@@ -34,16 +34,21 @@ object FoXml {
   // TODO distinguish between not found and other errors?
   def getDdm(foXml: Node): Option[Node] = getStream("dataset.xml", "DDM", foXml).toOption
 
-  def getAgreementsXml(foXml: Node): Option[Node] = getStream("agreements.xml", "agreements", foXml).toOption
+  def getManagedStream(id: String, foXml: Node): Option[Node] = getStream(id, "agreements", foXml).toOption
 
   def getFilesXml(foXml: Node): Option[Node] = getStream("files.xml", "file", foXml).toOption
 
   def getManifest(foXml: Node): Option[String] = getStreamRoot("manifest-sha1.txt", foXml).flatMap(getLocation)
 
-  def getAdditionalLicense(foXml: Node): Option[Node] = getStreamRoot("ADDITIONAL_LICENSE", foXml)
+  case class StreamInfo(location: String, extension: String)
 
-  // TODO which version(s)?
-  def getDatasetLicense(foXml: Node): Option[Node] = getStreamRoot("DATASET_LICENSE", foXml)
+  def getStreamInfo(root: Node): Option[StreamInfo] = {
+      for {
+        location <- getLocation(root)
+        fileName <- getLabel(root)
+        extension = fileName.split("[.]").last
+      } yield StreamInfo(location, extension)
+  }
 
   def getMessageFromDepositor(foXml: Node): Option[Node] = getStreamRoot("message-from-depositor.txt", foXml)
 
@@ -51,7 +56,7 @@ object FoXml {
    * @param node root of a stream
    * @return fedora-id
    */
-  def getLocation(node: Node): Option[String] = {
+  private def getLocation(node: Node): Option[String] = {
     (node \\ "contentLocation")
       .flatMap(_.attribute("REF"))
       .flatten.headOption.map(_.text) // TODO head or last?

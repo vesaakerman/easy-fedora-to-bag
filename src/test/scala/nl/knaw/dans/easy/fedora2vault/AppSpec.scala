@@ -22,9 +22,11 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
   private val samples = File("src/test/resources/sample-foxml")
 
   private class MockedApp(expectedObjects: File*) extends EasyFedora2vaultApp(null) {
-    override lazy val fedoraIO: FedoraIO = mock[FedoraIO]
-    expectedObjects.foreach(file =>
-      (fedoraIO.getObject(_: String)) expects * once() returning
+    override lazy val fedoraProvider: FedoraProvider = mock[FedoraProvider]
+    (fedoraProvider.getObject(_: String)) expects * once() returning
+      managed(new FileInputStream(expectedObjects.head.toJava))
+    expectedObjects.tail.foreach(file =>
+      (fedoraProvider.disseminateDatastream(_: String, _:String)) expects (*,*) once() returning
         managed(new FileInputStream(file.toJava))
     )
   }
@@ -46,24 +48,28 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
   }
 
   it should "process DepositApi" in {
-    (testDir / "additional-license").write("rabarbera")
-    (testDir / "dataset-license").write("rabarbera")
+    new MockedApp(
+      samples / "DepositApi.xml",
+      (testDir / "agreement.xml").write("lalala"),
+      (testDir / "additional-license").write("rabarbera"),
+      (testDir / "dataset-license").write("blablabla"),
+    ).simpleTransform("easy-dataset:17", testDir / "bag") shouldBe Success("???")
 
-    new MockedApp(samples / "DepositApi.xml", testDir / "additional-license", testDir / "dataset-license")
-      .simpleTransform("easy-dataset:17", testDir / "bag") shouldBe Success("???")
-
-    (testDir / "bag" / "metadata").list.toSeq.map(_.name)
-      .sortBy(identity) shouldBe Seq("DANS_Licence_UK.pdf", "amd.xml", "dataset.xml", "depositor-info", "emd.xml", "files.xml", "license.pdf")
+    (testDir / "bag" / "metadata" / "depositor-info/depositor-agreement.pdf").contentAsString shouldBe "blablabla"
+    (testDir / "bag" / "metadata" / "license.pdf").contentAsString shouldBe "rabarbera"
+    (testDir / "bag" / "metadata").list.toSeq.map(_.name).sortBy(identity) shouldBe
+      Seq("amd.xml", "dataset.xml", "depositor-info", "emd.xml", "files.xml", "license.pdf")
   }
 
   it should "process TalkOfEurope" in {
-    (testDir / "dataset-license").write("rabarbera")
+    new MockedApp(
+      samples / "TalkOfEurope.xml",
+      (testDir / "dataset-license").write("rabarbera"),
+    ).simpleTransform("easy-dataset:12", testDir / "bag") shouldBe Success("???")
 
-    new MockedApp(samples / "TalkOfEurope.xml", testDir / "dataset-license")
-      .simpleTransform("easy-dataset:12", testDir / "bag") shouldBe Success("???")
-
-    (testDir / "bag" / "metadata").list.toSeq.map(_.name)
-      .sortBy(identity) shouldBe Seq("amd.xml", "emd.xml", "license.pdf")
+    (testDir / "bag" / "metadata" / "depositor-info/depositor-agreement.pdf").contentAsString shouldBe "rabarbera"
+    (testDir / "bag" / "metadata").list.toSeq.map(_.name).sortBy(identity) shouldBe
+      Seq("amd.xml", "depositor-info", "emd.xml")
   }
 
   it should "process streaming" in {
