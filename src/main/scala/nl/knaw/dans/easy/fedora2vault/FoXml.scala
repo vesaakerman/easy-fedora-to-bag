@@ -23,6 +23,8 @@ object FoXml {
   private def getStream(streamId: String, rootTag: String, foXml: Node): Try[Node] = Try {
     val node = getStreamRoot(streamId, foXml)
       .getOrElse(throw new Exception(s"Stream with ID $streamId not found"))
+    if(!controlGroup(node).contains("X"))
+      throw new Exception(s"Stream with ID $streamId does not have control group X")
 
     (node \\ "xmlContent")
       .last
