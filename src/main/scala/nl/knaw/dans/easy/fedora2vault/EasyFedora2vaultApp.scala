@@ -16,6 +16,7 @@
 package nl.knaw.dans.easy.fedora2vault
 
 import java.io.InputStream
+import java.nio.file.Paths
 
 import better.files.File
 import com.yourmediashelf.fedora.client.FedoraClient
@@ -54,7 +55,7 @@ class EasyFedora2vaultApp(configuration: Configuration) {
     }
 
     for {
-      foXml <- fedoraProvider.getObject(datasetId).map(XML.load).tried
+      foXml <- loadFoXml(datasetId)
       depositor <- getOwner(foXml)
       bag <- DansV0Bag.empty(outputDir).map(_.withEasyUserAccount(depositor))
       _ <- getEmd(foXml)
@@ -76,10 +77,27 @@ class EasyFedora2vaultApp(configuration: Configuration) {
         .getOrElse(Success(()))
       _ <- managedMetadataStream(foXml, "DATASET_LICENSE", bag, "depositor-info/depositor-agreement") // TODO EASY-2697: older versions
         .getOrElse(Success(()))
+      fedoraIDs <- fedoraProvider.getSubordinates(depositor)
+      _ <- fedoraIDs.toStream
+        .withFilter(_.startsWith("easy-file:"))
+        .map(addPayloadFileTo(bag)).failFastOr(Success(()))
       _ <- bag.save()
       _ <- getManifest(foXml)
         .map(compareManifest(bag))
         .getOrElse(Success(())) // TODO check with sha's from fedora
     } yield "???" // TODO what?
+  }
+
+  private def addPayloadFileTo(bag: DansV0Bag)(fedoraFileId: String): Try[DansV0Bag] = {
+    loadFoXml(fedoraFileId)
+      .flatMap(foXml => fedoraProvider
+        .disseminateDatastream(fedoraFileId, "EASY_FILE")
+        .map(bag.addPayloadFile(_, Paths.get((foXml \\ "file-item-md" \\ "path").text)))
+        .tried.flatten
+      )
+  }
+
+  private def loadFoXml(fedoraId: DatasetId) = {
+    fedoraProvider.getObject(fedoraId).map(XML.load).tried
   }
 }

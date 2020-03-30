@@ -41,7 +41,7 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
 
   private class MockedLdapContext extends InitialLdapContext(new java.util.Hashtable[String, String](), null)
 
-  private class MockedApp(expectedObjects: File*) extends EasyFedora2vaultApp(null) {
+  private class MockedApp(expectedIds: Seq[String], expectedObjects: File*) extends EasyFedora2vaultApp(null) {
     override lazy val fedoraProvider: FedoraProvider = mock[FedoraProvider]
     override lazy val ldapContext: InitialLdapContext = mock[MockedLdapContext]
 
@@ -52,6 +52,12 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
       (fedoraProvider.disseminateDatastream(_: String, _: String)) expects(*, *) once() returning
         managed(new FileInputStream(file.toJava))
     )
+
+    (fedoraProvider.getSubordinates(_: String)) expects * once() returning Success(expectedIds)
+    expectedIds.foreach { id =>
+      (fedoraProvider.getObject(_: String)) expects * once() returning
+        managed(new FileInputStream(s"$samples/${ id.replace(":","-") }.xml"))
+    }
   }
 
   "simpleTransform" should "produce a bag with EMD" in {
@@ -62,7 +68,7 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
               </emd:easymetadata>
     (testDir / "fo.xml").write(createFoXml(emd, "easyadmin").serialize)
 
-    val app = new MockedApp(testDir / "fo.xml")
+    val app = new MockedApp(Seq("easy-file:35"), testDir / "fo.xml")
     expectAUser(app.ldapContext)
 
     app.simpleTransform("easy-dataset:17", testDir / "bag") shouldBe Success("???")
@@ -73,7 +79,7 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
   }
 
   it should "process DepositApi" in {
-    val app = new MockedApp(
+    val app = new MockedApp(Seq.empty,
       samples / "DepositApi.xml",
       (testDir / "additional-license").write("lalala"),
       (testDir / "dataset-license").write("blablabla"),
@@ -90,7 +96,7 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
   }
 
   it should "process TalkOfEurope" in {
-    val app = new MockedApp(
+    val app = new MockedApp(Seq.empty,
       samples / "TalkOfEurope.xml",
       (testDir / "dataset-license").write("rabarbera"),
     )
@@ -105,7 +111,7 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
   }
 
   it should "process streaming" in {
-    val app = new MockedApp(samples / "streaming.xml")
+    val app = new MockedApp(Seq.empty, samples / "streaming.xml")
     expectAUser(app.ldapContext)
     app.simpleTransform("easy-dataset:13", testDir / "bag") shouldBe Success("???")
 

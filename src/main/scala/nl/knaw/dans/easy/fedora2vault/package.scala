@@ -23,7 +23,7 @@ import nl.knaw.dans.bag.DansBag
 import org.joda.time.format.{ DateTimeFormatter, ISODateTimeFormat }
 import org.joda.time.{ DateTime, DateTimeZone }
 
-import scala.util.Try
+import scala.util.{ Failure, Try }
 import scala.xml.{ Node, PrettyPrinter, Utility }
 
 package object fedora2vault {
@@ -61,6 +61,16 @@ package object fedora2vault {
 
     def addMetadataStream(target: String)(content: InputStream): Try[Any] = {
       bag.addTagFile(content, Paths.get(s"metadata/$target"))
+    }
+  }
+
+  implicit class RichTries[T](val tries: TraversableOnce[Try[T]]) extends AnyVal {
+    // TODO candidate for nl.knaw.dans.lib.error ?
+    //  copied from https://github.com/DANS-KNAW/easy-deposit-api/blob/ff109d27d2f2548c9e053c34d41627a539a381d9/src/main/scala/nl.knaw.dans.easy.deposit/package.scala#L48
+    def failFastOr[R](onSuccess: => Try[R]): Try[R] = {
+      tries
+        .collectFirst { case Failure(e) => Failure(e) }
+        .getOrElse(onSuccess)
     }
   }
 }

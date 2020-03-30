@@ -52,6 +52,8 @@ object FoXml {
 
   def getFilesXml(foXml: Node): Option[Node] = getStream("files.xml", "file", foXml).toOption
 
+  def getFileMD(fileFoXml: Node): Try[Node] = getStream("EASY_FILE_METADATA", "file-item-md", fileFoXml)
+
   def getAgreementsXml(foXml: Node): Option[Node] = getStream("agreements.xml", "agreements", foXml).toOption
 
   def getManifest(foXml: Node): Option[String] = {
