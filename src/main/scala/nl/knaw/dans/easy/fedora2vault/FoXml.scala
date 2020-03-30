@@ -52,7 +52,7 @@ object FoXml {
 
   def getFilesXml(foXml: Node): Option[Node] = getStream("files.xml", "file", foXml).toOption
 
-  def getAgreementsXml(foXml: Node): Option[Node] = getStream("agreements.xml", "file", foXml).toOption
+  def getAgreementsXml(foXml: Node): Option[Node] = getStream("agreements.xml", "agreements", foXml).toOption
 
   def getManifest(foXml: Node): Option[String] = {
     val streamId = "manifest-sha1.txt"
@@ -84,5 +84,13 @@ object FoXml {
       .flatMap(_.attribute("VALUE"))
       .flatten.headOption.map(_.text)
       .getOrElse(throw new Exception("""FoXml has no <foxml:property NAME="info:fedora/fedora-system:def/model#ownerId" VALUE="???"/>"""))
+  }
+
+  def getEmdLicenseAccepted(foXml: Node): Try[String] = Try {
+    (foXml \\ "easymetadata" \ "rights" \ "license").text
+  }
+
+  def getEmdDateSubmitted(foXml: Node): Try[String] = Try {
+    (foXml \\ "easymetadata" \\ "dateSubmitted").text
   }
 }

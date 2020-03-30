@@ -31,6 +31,8 @@ package object fedora2vault {
   type DatasetId = String
   type Depositor = String
 
+  type LdapEnv = java.util.Hashtable[String, String]
+
   val dateTimeFormatter: DateTimeFormatter = ISODateTimeFormat.dateTime()
 
   def now: String = DateTime.now(DateTimeZone.UTC).toString(dateTimeFormatter)
@@ -51,6 +53,10 @@ package object fedora2vault {
 
     def addMetadataXml(target: String)(content: Node): Try[Any] = {
       bag.addTagFile(content.serialize.inputStream, Paths.get(s"metadata/$target"))
+    }
+
+    def addAgreements()(content: Node): Try[Any] = {
+      bag.addTagFile(content.serialize.inputStream, Paths.get(s"metadata/depositor-info/agreements.xml"))
     }
 
     def addMetadataStream(target: String)(content: InputStream): Try[Any] = {

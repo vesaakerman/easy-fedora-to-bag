@@ -18,6 +18,9 @@ package nl.knaw.dans.easy.fedora2vault
 import java.io.FileInputStream
 
 import better.files.File
+import javax.naming.NamingEnumeration
+import javax.naming.directory.{ BasicAttributes, SearchControls, SearchResult }
+import javax.naming.ldap.InitialLdapContext
 import nl.knaw.dans.easy.fedora2vault.fixture.{ FileSystemSupport, TestSupportFixture }
 import org.scalamock.scalatest.MockFactory
 import resource.managed
@@ -36,10 +39,15 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
   private val nameSpaceRegExp = """ xmlns:[a-z]+="[^"]*"""" // these attributes have a variable order
   private val samples = File("src/test/resources/sample-foxml")
 
+  private class MockedLdapContext extends InitialLdapContext(new java.util.Hashtable[String, String](), null)
+
   private class MockedApp(expectedObjects: File*) extends EasyFedora2vaultApp(null) {
     override lazy val fedoraProvider: FedoraProvider = mock[FedoraProvider]
+    override lazy val ldapContext: InitialLdapContext = mock[MockedLdapContext]
+
     (fedoraProvider.getObject(_: String)) expects * once() returning
       managed(new FileInputStream(expectedObjects.head.toJava))
+
     expectedObjects.tail.foreach(file =>
       (fedoraProvider.disseminateDatastream(_: String, _: String)) expects(*, *) once() returning
         managed(new FileInputStream(file.toJava))
@@ -54,8 +62,10 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
               </emd:easymetadata>
     (testDir / "fo.xml").write(createFoXml(emd, "easyadmin").serialize)
 
-    new MockedApp(testDir / "fo.xml")
-      .simpleTransform("easy-dataset:17", testDir / "bag") shouldBe Success("???")
+    val app = new MockedApp(testDir / "fo.xml")
+    expectAUser(app.ldapContext)
+
+    app.simpleTransform("easy-dataset:17", testDir / "bag") shouldBe Success("???")
 
     (testDir / "bag" / "bag-info.txt").contentAsString should startWith("EASY-User-Account: easyadmin")
     (testDir / "bag" / "metadata" / "emd.xml").contentAsString.replaceAll(nameSpaceRegExp, "") shouldBe
@@ -63,36 +73,57 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
   }
 
   it should "process DepositApi" in {
-    new MockedApp(
+    val app = new MockedApp(
       samples / "DepositApi.xml",
       (testDir / "additional-license").write("lalala"),
       (testDir / "dataset-license").write("blablabla"),
       (testDir / "manifest-sha1.txt").write("rabarbera"),
-    ).simpleTransform("easy-dataset:17", testDir / "bag") shouldBe Success("???")
+    )
+    app.simpleTransform("easy-dataset:17", testDir / "bag") shouldBe Success("???")
 
     (testDir / "bag" / "metadata" / "depositor-info/depositor-agreement.pdf").contentAsString shouldBe "blablabla"
     (testDir / "bag" / "metadata" / "license.pdf").contentAsString shouldBe "lalala"
     (testDir / "bag" / "metadata").list.toSeq.map(_.name).sortBy(identity) shouldBe
       Seq("amd.xml", "dataset.xml", "depositor-info", "emd.xml", "files.xml", "license.pdf")
+    (testDir / "bag" / "metadata" / "depositor-info").list.toSeq.map(_.name).sortBy(identity) shouldBe
+      Seq("agreements.xml", "depositor-agreement.pdf", "message-from-depositor.txt")
   }
 
   it should "process TalkOfEurope" in {
-    new MockedApp(
+    val app = new MockedApp(
       samples / "TalkOfEurope.xml",
       (testDir / "dataset-license").write("rabarbera"),
-    ).simpleTransform("easy-dataset:12", testDir / "bag") shouldBe Success("???")
+    )
+    expectAUser(app.ldapContext)
+    app.simpleTransform("easy-dataset:12", testDir / "bag") shouldBe Success("???")
 
     (testDir / "bag" / "metadata" / "depositor-info/depositor-agreement.pdf").contentAsString shouldBe "rabarbera"
     (testDir / "bag" / "metadata").list.toSeq.map(_.name).sortBy(identity) shouldBe
       Seq("amd.xml", "depositor-info", "emd.xml")
+    (testDir / "bag" / "metadata" / "depositor-info").list.toSeq.map(_.name).sortBy(identity) shouldBe
+      Seq("agreements.xml", "depositor-agreement.pdf")
   }
 
   it should "process streaming" in {
-    new MockedApp(samples / "streaming.xml")
-      .simpleTransform("easy-dataset:13", testDir / "bag") shouldBe Success("???")
+    val app = new MockedApp(samples / "streaming.xml")
+    expectAUser(app.ldapContext)
+    app.simpleTransform("easy-dataset:13", testDir / "bag") shouldBe Success("???")
 
     (testDir / "bag" / "metadata").list.toSeq.map(_.name)
-      .sortBy(identity) shouldBe Seq("amd.xml", "emd.xml")
+      .sortBy(identity) shouldBe Seq("amd.xml", "depositor-info", "emd.xml")
+    (testDir / "bag" / "metadata" / "depositor-info").list.toSeq.map(_.name).sortBy(identity) shouldBe
+      Seq("agreements.xml")
+  }
+
+  private def expectAUser(ldapContext: InitialLdapContext) = {
+    val result = mock[NamingEnumeration[SearchResult]]
+    result.hasMoreElements _ expects() returning true
+    val attributes = new BasicAttributes {
+      put("displayname", "U.Ser")
+      put("mail", "does.not.exist@dans.knaw.nl")
+    }
+    result.nextElement _ expects() returning new SearchResult("", null, attributes)
+    (ldapContext.search(_: String, _: String, _: SearchControls)) expects(*, *, *) returning result
   }
 
   private def createFoXml(emd: Elem, owner: DatasetId) = {

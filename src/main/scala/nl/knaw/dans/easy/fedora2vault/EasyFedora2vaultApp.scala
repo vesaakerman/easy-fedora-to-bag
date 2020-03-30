@@ -19,6 +19,7 @@ import java.io.InputStream
 
 import better.files.File
 import com.yourmediashelf.fedora.client.FedoraClient
+import javax.naming.ldap.InitialLdapContext
 import nl.knaw.dans.bag.v0.DansV0Bag
 import nl.knaw.dans.easy.fedora2vault.Command.FeedBackMessage
 import nl.knaw.dans.easy.fedora2vault.FoXml.{ getEmd, _ }
@@ -27,7 +28,9 @@ import scala.util.{ Success, Try }
 import scala.xml.{ Elem, XML }
 
 class EasyFedora2vaultApp(configuration: Configuration) {
-  lazy val fedoraProvider = new FedoraProvider(new FedoraClient(configuration.fedoraCredentials))
+  lazy val fedoraProvider: FedoraProvider = new FedoraProvider(new FedoraClient(configuration.fedoraCredentials))
+  lazy val ldapContext: InitialLdapContext = new InitialLdapContext(configuration.ldapEnv, null)
+  private lazy val ldap = new Ldap(ldapContext)
 
   def simpleTransform(datasetId: DatasetId, outputDir: File): Try[FeedBackMessage] = {
 
@@ -67,9 +70,8 @@ class EasyFedora2vaultApp(configuration: Configuration) {
       _ <- getFilesXml(foXml)
         .map(bag.addMetadataXml("files.xml"))
         .getOrElse(Success(())) // TODO EASY-2678
-      _ <- getAgreementsXml(foXml)
-        .map(bag.addMetadataXml("agreements.xml"))
-        .getOrElse(Success(()))
+      _ <- getAgreementsXml(foXml).map(bag.addAgreements())
+        .getOrElse(AgreementsXml(foXml, ldap).map(bag.addAgreements()))
       _ <- managedMetadataStream(foXml, "ADDITIONAL_LICENSE", bag, "license") // TODO where to store?
         .getOrElse(Success(()))
       _ <- managedMetadataStream(foXml, "DATASET_LICENSE", bag, "depositor-info/depositor-agreement") // TODO all versions?
