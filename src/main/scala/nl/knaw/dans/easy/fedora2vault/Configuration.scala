@@ -55,7 +55,6 @@ object Configuration {
         put(Context.SECURITY_CREDENTIALS, properties.getString("auth.ldap.password"))
         put(Context.INITIAL_CONTEXT_FACTORY, "com.sun.jndi.ldap.LdapCtxFactory")
       }
-
     )
   }
 }
