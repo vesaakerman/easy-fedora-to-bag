@@ -48,7 +48,7 @@ class EasyFedora2vaultApp(configuration: Configuration) {
     def compareManifest(bag: DansV0Bag)(streamId: String): Try[Any] = {
       fedoraProvider.disseminateDatastream(datasetId, streamId)
         .map { inputStream: InputStream =>
-          val manifestst = bag.payloadManifests
+          val manifests = bag.payloadManifests
           Success(()) // TODO EASY-2678
         }.tried.flatten
     }
@@ -66,15 +66,15 @@ class EasyFedora2vaultApp(configuration: Configuration) {
         .getOrElse(Success(())) // TODO EASY-2683
       _ <- getMessageFromDepositor(foXml)
         .map(bag.addMetadataXml("depositor-info/message-from-depositor.txt"))
-        .getOrElse(Success(())) // TODO EMD/other/remark?
+        .getOrElse(Success(())) // TODO EASY-2697: EMD/other/remark
       _ <- getFilesXml(foXml)
         .map(bag.addMetadataXml("files.xml"))
         .getOrElse(Success(())) // TODO EASY-2678
       _ <- getAgreementsXml(foXml).map(bag.addAgreements())
         .getOrElse(AgreementsXml(foXml, ldap).map(bag.addAgreements()))
-      _ <- managedMetadataStream(foXml, "ADDITIONAL_LICENSE", bag, "license") // TODO where to store?
+      _ <- managedMetadataStream(foXml, "ADDITIONAL_LICENSE", bag, "license") // TODO EASY-2696 where to put?
         .getOrElse(Success(()))
-      _ <- managedMetadataStream(foXml, "DATASET_LICENSE", bag, "depositor-info/depositor-agreement") // TODO all versions?
+      _ <- managedMetadataStream(foXml, "DATASET_LICENSE", bag, "depositor-info/depositor-agreement") // TODO EASY-2697: older versions
         .getOrElse(Success(()))
       _ <- bag.save()
       _ <- getManifest(foXml)

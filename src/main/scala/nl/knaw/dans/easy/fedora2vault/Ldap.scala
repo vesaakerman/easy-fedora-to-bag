@@ -36,7 +36,7 @@ class Ldap(ctx: LdapContext) {
       .toStream
       .map(_.getAttributes)
       .headOption
-      .getOrElse { throw new Exception(depositorId) }
+      .getOrElse { throw new Exception(s"Could not find $depositorId") }
   }.map(implicit attrs => {
     val name = getOrEmpty("displayname")
     val mail = getOrEmpty("mail")
