@@ -41,23 +41,9 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
 
   private class MockedLdapContext extends InitialLdapContext(new java.util.Hashtable[String, String](), null)
 
-  private class MockedApp(expectedIds: Seq[String], expectedObjects: File*) extends EasyFedora2vaultApp(null) {
+  private class MockedApp() extends EasyFedora2vaultApp(null) {
     override lazy val fedoraProvider: FedoraProvider = mock[FedoraProvider]
     override lazy val ldapContext: InitialLdapContext = mock[MockedLdapContext]
-
-    (fedoraProvider.getObject(_: String)) expects * once() returning
-      managed(new FileInputStream(expectedObjects.head.toJava))
-
-    expectedObjects.tail.foreach(file =>
-      (fedoraProvider.disseminateDatastream(_: String, _: String)) expects(*, *) once() returning
-        managed(new FileInputStream(file.toJava))
-    )
-
-    (fedoraProvider.getSubordinates(_: String)) expects * once() returning Success(expectedIds)
-    expectedIds.foreach { id =>
-      (fedoraProvider.getObject(_: String)) expects * once() returning
-        managed(new FileInputStream(s"$samples/${ id.replace(":","-") }.xml"))
-    }
   }
 
   "simpleTransform" should "produce a bag with EMD" in {
@@ -68,23 +54,35 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
               </emd:easymetadata>
     (testDir / "fo.xml").write(createFoXml(emd, "easyadmin").serialize)
 
-    val app = new MockedApp(Seq("easy-file:35"), testDir / "fo.xml")
+    val app = new MockedApp()
     expectAUser(app.ldapContext)
+    expectedSubordinates(app.fedoraProvider, "easy-file:35")
+    expectedFoXmls(app.fedoraProvider,
+        testDir / "fo.xml",
+        samples / "easy-file-35.xml",
+    )
+    expectedManagedStreams(app.fedoraProvider,
+      (testDir / "EASY_FILE").write("lalala"),
+    )
 
     app.simpleTransform("easy-dataset:17", testDir / "bag") shouldBe Success("???")
 
     (testDir / "bag" / "bag-info.txt").contentAsString should startWith("EASY-User-Account: easyadmin")
     (testDir / "bag" / "metadata" / "emd.xml").contentAsString.replaceAll(nameSpaceRegExp, "") shouldBe
       emd.serialize.replaceAll(nameSpaceRegExp, "")
+    (testDir / "bag" / "data" / "original" / "P1130783.JPG").contentAsString shouldBe "lalala"
   }
 
   it should "process DepositApi" in {
-    val app = new MockedApp(Seq.empty,
-      samples / "DepositApi.xml",
+    val app = new MockedApp()
+    expectedSubordinates(app.fedoraProvider)
+    expectedFoXmls(app.fedoraProvider, samples / "DepositApi.xml")
+    expectedManagedStreams(app.fedoraProvider,
       (testDir / "additional-license").write("lalala"),
       (testDir / "dataset-license").write("blablabla"),
       (testDir / "manifest-sha1.txt").write("rabarbera"),
     )
+
     app.simpleTransform("easy-dataset:17", testDir / "bag") shouldBe Success("???")
 
     (testDir / "bag" / "metadata" / "depositor-info/depositor-agreement.pdf").contentAsString shouldBe "blablabla"
@@ -96,11 +94,14 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
   }
 
   it should "process TalkOfEurope" in {
-    val app = new MockedApp(Seq.empty,
-      samples / "TalkOfEurope.xml",
+    val app = new MockedApp()
+    expectAUser(app.ldapContext)
+    expectedFoXmls(app.fedoraProvider, samples / "TalkOfEurope.xml")
+    expectedSubordinates(app.fedoraProvider)
+    expectedManagedStreams(app.fedoraProvider,
       (testDir / "dataset-license").write("rabarbera"),
     )
-    expectAUser(app.ldapContext)
+
     app.simpleTransform("easy-dataset:12", testDir / "bag") shouldBe Success("???")
 
     (testDir / "bag" / "metadata" / "depositor-info/depositor-agreement.pdf").contentAsString shouldBe "rabarbera"
@@ -111,8 +112,11 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
   }
 
   it should "process streaming" in {
-    val app = new MockedApp(Seq.empty, samples / "streaming.xml")
+    val app = new MockedApp()
     expectAUser(app.ldapContext)
+    expectedFoXmls(app.fedoraProvider, samples / "streaming.xml")
+    expectedSubordinates(app.fedoraProvider)
+
     app.simpleTransform("easy-dataset:13", testDir / "bag") shouldBe Success("???")
 
     (testDir / "bag" / "metadata").list.toSeq.map(_.name)
@@ -121,7 +125,25 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
       Seq("agreements.xml")
   }
 
-  private def expectAUser(ldapContext: InitialLdapContext) = {
+  private def expectedSubordinates(fedoraProvider: => FedoraProvider, expectedIds: String*): Unit = {
+    (fedoraProvider.getSubordinates(_: String)) expects * once() returning Success(expectedIds)
+  }
+
+  private def expectedManagedStreams(fedoraProvider: => FedoraProvider, expectedObjects: File*): Unit = {
+    expectedObjects.foreach(file =>
+      (fedoraProvider.disseminateDatastream(_: String, _: String)) expects(*, *) once() returning
+        managed(new FileInputStream(file.toJava))
+    )
+  }
+
+  private def expectedFoXmls(fedoraProvider: => FedoraProvider, expectedObjects: File*): Unit = {
+    expectedObjects.foreach(file =>
+      (fedoraProvider.getObject(_: String)) expects * once() returning
+        managed(new FileInputStream(file.toJava))
+    )
+  }
+
+  private def expectAUser(ldapContext: => InitialLdapContext) = {
     val result = mock[NamingEnumeration[SearchResult]]
     result.hasMoreElements _ expects() returning true
     val attributes = new BasicAttributes {
