@@ -24,9 +24,9 @@ import javax.naming.ldap.InitialLdapContext
 import nl.knaw.dans.bag.v0.DansV0Bag
 import nl.knaw.dans.easy.fedora2vault.Command.FeedBackMessage
 import nl.knaw.dans.easy.fedora2vault.FoXml.{ getEmd, _ }
-
+import better.files.StringExtensions
 import scala.util.{ Success, Try }
-import scala.xml.{ Elem, XML }
+import scala.xml.{ Elem, Node, XML }
 
 class EasyFedora2vaultApp(configuration: Configuration) {
   lazy val fedoraProvider: FedoraProvider = new FedoraProvider(new FedoraClient(configuration.fedoraCredentials))
@@ -41,7 +41,7 @@ class EasyFedora2vaultApp(configuration: Configuration) {
           val extension = label.split("[.]").last
           val bagFile = s"$metadataFile.$extension"
           fedoraProvider.disseminateDatastream(datasetId, streamId)
-            .map(bag.addMetadataStream(bagFile))
+            .map(addMetadataStream(bag, bagFile))
             .tried.flatten
         }
     }
@@ -59,20 +59,22 @@ class EasyFedora2vaultApp(configuration: Configuration) {
       depositor <- getOwner(foXml)
       bag <- DansV0Bag.empty(outputDir).map(_.withEasyUserAccount(depositor))
       _ <- getEmd(foXml)
-        .flatMap(bag.addMetadataXml("emd.xml"))
+        .flatMap(addMetadataXml(bag, "emd.xml"))
       _ <- getAmd(foXml)
-        .flatMap(bag.addMetadataXml("amd.xml"))
+        .flatMap(addMetadataXml(bag, "amd.xml"))
       _ <- getDdm(foXml)
-        .map(bag.addMetadataXml("dataset.xml"))
-        .getOrElse(Success(())) // TODO EASY-2683
+        .map(addMetadataXml(bag, "dataset.xml"))
+        .getOrElse(Success(())) // TODO EASY-2683 END -> DDM
       _ <- getMessageFromDepositor(foXml)
-        .map(bag.addMetadataXml("depositor-info/message-from-depositor.txt"))
+        .map(addMetadataXml(bag, "depositor-info/message-from-depositor.txt"))
         .getOrElse(Success(())) // TODO EASY-2697: EMD/other/remark
       _ <- getFilesXml(foXml)
-        .map(bag.addMetadataXml("files.xml"))
-        .getOrElse(Success(())) // TODO EASY-2678
-      _ <- getAgreementsXml(foXml).map(bag.addAgreements())
-        .getOrElse(AgreementsXml(foXml, ldap).map(bag.addAgreements()))
+        .map(addMetadataXml(bag, "files.xml"))
+        .getOrElse(Success(()))
+      _ <- getAgreementsXml(foXml)
+        .map(addAgreements(bag))
+        .getOrElse(AgreementsXml(foXml, ldap)
+          .map(addAgreements(bag)))
       _ <- managedMetadataStream(foXml, "ADDITIONAL_LICENSE", bag, "license") // TODO EASY-2696 where to put?
         .getOrElse(Success(()))
       _ <- managedMetadataStream(foXml, "DATASET_LICENSE", bag, "depositor-info/depositor-agreement") // TODO EASY-2697: older versions
@@ -86,6 +88,18 @@ class EasyFedora2vaultApp(configuration: Configuration) {
         .map(compareManifest(bag))
         .getOrElse(Success(())) // TODO check with sha's from fedora
     } yield "???" // TODO what?
+  }
+
+  private def addMetadataStream(bag: DansV0Bag, target: String)(content: InputStream): Try[Any] = {
+    bag.addTagFile(content, Paths.get(s"metadata/$target"))
+  }
+
+  private def addMetadataXml(bag: DansV0Bag, target: String)(content: Node): Try[Any] = {
+    bag.addTagFile(content.serialize.inputStream, Paths.get(s"metadata/$target"))
+  }
+
+  private def addAgreements(bag: DansV0Bag)(content: Node): Try[Any] = {
+    bag.addTagFile(content.serialize.inputStream, Paths.get(s"metadata/depositor-info/agreements.xml"))
   }
 
   private def addPayloadFileTo(bag: DansV0Bag)(fedoraFileId: String): Try[DansV0Bag] = {

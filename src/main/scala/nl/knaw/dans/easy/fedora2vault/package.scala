@@ -15,11 +15,6 @@
  */
 package nl.knaw.dans.easy
 
-import java.io.InputStream
-import java.nio.file.Paths
-
-import better.files.StringExtensions
-import nl.knaw.dans.bag.DansBag
 import org.joda.time.format.{ DateTimeFormatter, ISODateTimeFormat }
 import org.joda.time.{ DateTime, DateTimeZone }
 
@@ -45,22 +40,6 @@ package object fedora2vault {
       val printer = new PrettyPrinter(160, 2)
       val trimmed = Utility.trim(elem)
       prologue + "\n" + printer.format(trimmed)
-    }
-  }
-
-  implicit class BagExtensions(val bag: DansBag) extends AnyVal {
-    // variant of https://github.com/DANS-KNAW/easy-deposit-api/blob/ff109d27d2f2548c9e053c34d41627a539a381d9/src/main/scala/nl.knaw.dans.easy.deposit/package.scala#L38-L46
-
-    def addMetadataXml(target: String)(content: Node): Try[Any] = {
-      bag.addTagFile(content.serialize.inputStream, Paths.get(s"metadata/$target"))
-    }
-
-    def addAgreements()(content: Node): Try[Any] = {
-      bag.addTagFile(content.serialize.inputStream, Paths.get(s"metadata/depositor-info/agreements.xml"))
-    }
-
-    def addMetadataStream(target: String)(content: InputStream): Try[Any] = {
-      bag.addTagFile(content, Paths.get(s"metadata/$target"))
     }
   }
 
