@@ -66,7 +66,7 @@ class EasyFedora2vaultApp(configuration: Configuration) extends DebugEnhancedLog
         .flatMap(addMetadataXml(bag, "amd.xml"))
       _ <- getDdm(foXml)
         .map(addMetadataXml(bag, "dataset.xml"))
-        .getOrElse(Success(())) // TODO EASY-2683 END -> DDM
+        .getOrElse(Success(())) // TODO EASY-2683 EMD -> DDM
       _ <- getMessageFromDepositor(foXml)
         .map(addMetadataXml(bag, "depositor-info/message-from-depositor.txt"))
         .getOrElse(Success(())) // TODO EASY-2697: EMD/other/remark
