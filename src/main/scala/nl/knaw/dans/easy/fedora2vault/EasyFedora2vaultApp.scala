@@ -25,10 +25,12 @@ import nl.knaw.dans.bag.v0.DansV0Bag
 import nl.knaw.dans.easy.fedora2vault.Command.FeedBackMessage
 import nl.knaw.dans.easy.fedora2vault.FoXml.{ getEmd, _ }
 import better.files.StringExtensions
+import nl.knaw.dans.lib.logging.DebugEnhancedLogging
+
 import scala.util.{ Success, Try }
 import scala.xml.{ Elem, Node, XML }
 
-class EasyFedora2vaultApp(configuration: Configuration) {
+class EasyFedora2vaultApp(configuration: Configuration) extends DebugEnhancedLogging {
   lazy val fedoraProvider: FedoraProvider = new FedoraProvider(new FedoraClient(configuration.fedoraCredentials))
   lazy val ldapContext: InitialLdapContext = new InitialLdapContext(configuration.ldapEnv, null)
   private lazy val ldap = new Ldap(ldapContext)
@@ -79,7 +81,7 @@ class EasyFedora2vaultApp(configuration: Configuration) {
         .getOrElse(Success(()))
       _ <- managedMetadataStream(foXml, "DATASET_LICENSE", bag, "depositor-info/depositor-agreement") // TODO EASY-2697: older versions
         .getOrElse(Success(()))
-      fedoraIDs <- fedoraProvider.getSubordinates(depositor)
+      fedoraIDs <- fedoraProvider.getSubordinates(datasetId)
       _ <- fedoraIDs.toStream
         .withFilter(_.startsWith("easy-file:"))
         .map(addPayloadFileTo(bag)).failFastOr(Success(()))
