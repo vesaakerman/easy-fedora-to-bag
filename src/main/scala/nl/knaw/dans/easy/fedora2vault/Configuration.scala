@@ -20,10 +20,12 @@ import java.net.URL
 import better.files.File
 import better.files.File.root
 import com.yourmediashelf.fedora.client.FedoraCredentials
+import javax.naming.Context
 import org.apache.commons.configuration.PropertiesConfiguration
 
 case class Configuration(version: String,
                          fedoraCredentials: FedoraCredentials,
+                         ldapEnv: LdapEnv,
                         )
 
 object Configuration {
@@ -45,7 +47,14 @@ object Configuration {
         new URL(properties.getString("fcrepo.url")),
         properties.getString("fcrepo.user"),
         properties.getString("fcrepo.password"),
-      )
+      ),
+      new LdapEnv {
+        put(Context.PROVIDER_URL, properties.getString("auth.ldap.url"))
+        put(Context.SECURITY_AUTHENTICATION, "simple")
+        put(Context.SECURITY_PRINCIPAL, properties.getString("auth.ldap.user"))
+        put(Context.SECURITY_CREDENTIALS, properties.getString("auth.ldap.password"))
+        put(Context.INITIAL_CONTEXT_FACTORY, "com.sun.jndi.ldap.LdapCtxFactory")
+      }
     )
   }
 }
