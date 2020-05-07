@@ -13,14 +13,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package nl.knaw.dans.easy.fedora2vault.fixture
+package nl.knaw.dans.easy.fedora2vault
 
-import org.joda.time.{ DateTime, DateTimeUtils }
+import java.util.UUID
 
-trait FixedCurrentDateTimeSupport {
+import nl.knaw.dans.easy.fedora2vault.TransformationType.TransformationType
 
-  val nowYMD = "2020-02-02"
-  val nowUTC = s"${ nowYMD }T20:20:02.000Z"
-  /** Causes DateTime.now() to return a predefined value. */
-  DateTimeUtils.setCurrentMillisFixed(new DateTime(nowUTC).getMillis)
+case class FeedBack(easyDatasetId: DatasetId,
+                    doi: String,
+                    depositor: Depositor,
+                    transformationType: TransformationType,
+                    uuid: UUID,
+                    comment: String,
+                   ) {
+  override def toString = s"$easyDatasetId\t$doi\t$depositor\t$transformationType\t$uuid\t$comment"
+}
+object FeedBack {
+  val header = "easyDatasetId\tdoi\tdepositor\ttransformationType\tuuid\tcomment"
 }

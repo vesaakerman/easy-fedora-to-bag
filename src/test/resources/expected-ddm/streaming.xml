@@ -1,0 +1,21 @@
+<ddm:DDM xsi:schemaLocation="http://easy.dans.knaw.nl/schemas/md/ddm/ https://easy.dans.knaw.nl/schemas/md/ddm/ddm.xsd">
+    <ddm:profile>
+        <dc:title>Streaming private/continuous</dc:title>
+        <dct:description>Example video</dct:description>
+        <dcx-dai:creatorDetails>
+            <dcx-dai:organization>
+                <dcx-dai:name>DANS</dcx-dai:name>
+            </dcx-dai:organization>
+        </dcx-dai:creatorDetails>
+        <ddm:created>2017-09-30</ddm:created>
+        <ddm:available>2017-09-30</ddm:available>
+        <ddm:audience>D35400</ddm:audience>
+        <ddm:accessRights>OPEN_ACCESS</ddm:accessRights>
+    </ddm:profile>
+    <ddm:dcmiMetadata>
+        <dct:relation/>
+        <dct:type xsi:type="dct:DCMIType">Dataset</dct:type>
+        <dct:format>video/mpeg</dct:format>
+        <dct:license xsi:type="dct:URI">http://creativecommons.org/publicdomain/zero/1.0</dct:license>
+    </ddm:dcmiMetadata>
+</ddm:DDM>

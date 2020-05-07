@@ -15,12 +15,9 @@
  */
 package nl.knaw.dans.easy.fedora2vault.fixture
 
-import org.joda.time.{ DateTime, DateTimeUtils }
+import java.util.TimeZone
 
-trait FixedCurrentDateTimeSupport {
-
-  val nowYMD = "2020-02-02"
-  val nowUTC = s"${ nowYMD }T20:20:02.000Z"
-  /** Causes DateTime.now() to return a predefined value. */
-  DateTimeUtils.setCurrentMillisFixed(new DateTime(nowUTC).getMillis)
+trait TimeZoneFixture {
+  // for proper conversion of DateTime to date string by EMD's IsoDate/BasicDate
+  TimeZone.setDefault(TimeZone.getTimeZone("Europe/Amsterdam"))
 }
