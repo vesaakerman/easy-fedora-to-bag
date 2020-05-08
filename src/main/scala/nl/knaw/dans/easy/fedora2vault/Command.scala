@@ -15,7 +15,10 @@
  */
 package nl.knaw.dans.easy.fedora2vault
 
-import better.files.File
+import java.io.FileWriter
+import java.util.UUID
+
+import better.files.{ Dispose, File }
 import nl.knaw.dans.lib.error._
 import nl.knaw.dans.lib.logging.DebugEnhancedLogging
 
@@ -39,8 +42,11 @@ object Command extends App with DebugEnhancedLogging {
 
   private def runSubcommand(app: EasyFedora2vaultApp): Try[FeedBackMessage] = {
     val outputDir = commandLine.outputDir()
-    commandLine.datasetId
-      .map(app.simpleTransform(_, outputDir)) // TODO curry to get rid of _, after/when merging with PR #2
-      .getOrElse(app.simpleTransForms(commandLine.inputFile(), outputDir))
+    val logWriter: FileWriter = commandLine.logFile().newFileWriter(append = true)
+    new Dispose(CsvRecord.csvFormat.print(logWriter)).apply { implicit printer =>
+      commandLine.datasetId
+        .map(app.simpleTransform(outputDir / UUID.randomUUID().toString))
+        .getOrElse(app.simpleTransForms(commandLine.inputFile(), outputDir))
+    }
   }
 }
