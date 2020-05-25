@@ -25,9 +25,10 @@ import cats.instances.try_._
 import cats.syntax.traverse._
 import com.yourmediashelf.fedora.client.{ FedoraClient, FedoraClientException }
 import javax.naming.ldap.InitialLdapContext
+import nl.knaw.dans.bag.ChecksumAlgorithm
 import nl.knaw.dans.bag.v0.DansV0Bag
 import nl.knaw.dans.easy.fedora2vault.Command.FeedBackMessage
-import nl.knaw.dans.easy.fedora2vault.FileItem.assemble
+import nl.knaw.dans.easy.fedora2vault.FileItem.filesXml
 import nl.knaw.dans.easy.fedora2vault.FoXml.{ getEmd, _ }
 import nl.knaw.dans.easy.fedora2vault.TransformationType.SIMPLE
 import nl.knaw.dans.lib.error._
@@ -39,7 +40,7 @@ import org.joda.time.DateTime
 
 import scala.collection.JavaConverters._
 import scala.util.{ Failure, Success, Try }
-import scala.xml.{ Elem, Node }
+import scala.xml.{ Elem, Node, PrettyPrinter }
 
 class EasyFedora2vaultApp(configuration: Configuration) extends DebugEnhancedLogging {
   lazy val fedoraProvider: FedoraProvider = new FedoraProvider(new FedoraClient(configuration.fedoraCredentials))
@@ -55,10 +56,9 @@ class EasyFedora2vaultApp(configuration: Configuration) extends DebugEnhancedLog
   private def simpleTransForms(input: Iterator[DatasetId], outputDir: File)
                               (printer: CSVPrinter): Try[FeedBackMessage] = input
     .map(simpleTransform(_, outputDir / UUID.randomUUID.toString, printer))
-    .collectFirst { case f @ Failure(_) => f }
-    .getOrElse(Success("OK"))
+    .failFastOr(Success("OK"))
 
-  private def simpleTransform(datasetId: DatasetId, bagDir: File, printer: CSVPrinter): Try[FeedBackMessage] = {
+  private def simpleTransform(datasetId: DatasetId, bagDir: File, printer: CSVPrinter): Try[Any] = {
     simpleTransform(datasetId, bagDir)
       .doIfFailure { case t => logger.error(s"$datasetId -> $datasetId failed: $t", t) }
       .recoverWith {
@@ -69,7 +69,6 @@ class EasyFedora2vaultApp(configuration: Configuration) extends DebugEnhancedLog
         ))
       }
       .doIfSuccess(_.print(printer))
-      .map(_.comment)
   }
 
   def simpleTransform(datasetId: DatasetId, bagDir: File): Try[CsvRecord] = {
@@ -83,14 +82,6 @@ class EasyFedora2vaultApp(configuration: Configuration) extends DebugEnhancedLog
             .map(addMetadataStream(bag, bagFile))
             .tried.flatten
         }
-    }
-
-    def compareManifest(bag: DansV0Bag)(streamId: String): Try[Any] = {
-      fedoraProvider.disseminateDatastream(datasetId, streamId)
-        .map { inputStream: InputStream =>
-          val manifests = bag.payloadManifests
-          Success(()) // TODO EASY-2678
-        }.tried.flatten
     }
 
     for {
@@ -129,11 +120,8 @@ class EasyFedora2vaultApp(configuration: Configuration) extends DebugEnhancedLog
       fedoraIDs <- fedoraProvider.getSubordinates(datasetId)
       fileItems <- fedoraIDs.filter(_.startsWith("easy-file:"))
         .toList.traverse(addPayloadFileTo(bag))
-      _ <- addXmlMetadata(bag, "files.xml")(assemble(fileItems))
+      _ <- addXmlMetadata(bag, "files.xml")(filesXml(fileItems))
       _ <- bag.save()
-      _ <- getManifest(foXml)
-        .map(compareManifest(bag))
-        .getOrElse(Success(())) // TODO check with sha's from fedora
       doi = emd.getEmdIdentifier.getDansManagedDoi
     } yield CsvRecord(datasetId, doi, depositor, SIMPLE, UUID.fromString(bagDir.name), "OK")
   }
@@ -157,20 +145,47 @@ class EasyFedora2vaultApp(configuration: Configuration) extends DebugEnhancedLog
   }
 
   private def addXmlPayload(bag: DansV0Bag, path: String)(content: Node): Try[Any] = {
-    bag.addTagFile(content.serialize.inputStream, Paths.get(path))
+    bag.addPayloadFile(content.serialize.inputStream, Paths.get(path))
   }
 
+  // prints a one liner unlike the default printer
+  private val logPrinter = new PrettyPrinter(-1, 0)
+
   private def addPayloadFileTo(bag: DansV0Bag)(fedoraFileId: String): Try[FileItem] = {
-    fedoraProvider.loadFoXml(fedoraFileId)
-      .flatMap { foXml =>
-        val metadata = foXml \\ "file-item-md"
-        val path = Paths.get((metadata \\ "path").text)
-        logger.info(s"Adding $fedoraFileId to $path")
-        fedoraProvider
-          .disseminateDatastream(fedoraFileId, "EASY_FILE")
-          .map(bag.addPayloadFile(_, path))
-          .tried.flatten
-          .flatMap(_ => FileItem(fedoraFileId, foXml))
-      }
+    val streamId = "EASY_FILE"
+    for {
+      foXml <- fedoraProvider.loadFoXml(fedoraFileId)
+      path = Paths.get((foXml \\ "file-item-md" \\ "path").text)
+      _ = logger.info(s"Adding $fedoraFileId to $path")
+      _ <- fedoraProvider
+        .disseminateDatastream(fedoraFileId, streamId)
+        .map(bag.addPayloadFile(_, path))
+        .tried.flatten
+      _ <- bag.save()
+      fileStream = getStreamRoot(streamId, foXml)
+      maybeDigest = fileStream.flatMap(n => (n \\ "contentDigest").theSeq.headOption)
+      _ <- maybeDigest.map(validate(bag.baseDir / s"data/$path", bag, fedoraFileId))
+        .getOrElse(Success(logger.warn(s"No digest found for $fedoraFileId ${ fileStream.map(logPrinter.format(_)).getOrElse("") }")))
+      fileItem <- FileItem(fedoraFileId, foXml)
+    } yield fileItem
+  }
+
+  private def validate(file: File, bag: DansV0Bag, fedoraFileId: String)(maybeDigest: Node) = Try {
+    val algorithms = Map(
+      "SHA-1" -> ChecksumAlgorithm.SHA1,
+      "MD-5" -> ChecksumAlgorithm.MD5,
+      "SHA-256" -> ChecksumAlgorithm.SHA256,
+      "SHA-256" -> ChecksumAlgorithm.SHA512,
+    )
+    val digestType = (maybeDigest \\ "@TYPE").text
+    val digestValue = (maybeDigest \\ "@DIGEST").text
+    val checksum = (for {
+      algorithm <- algorithms.get(digestType)
+      manifest <- bag.payloadManifests.get(algorithm)
+      checksum <- manifest.get(file)
+    } yield checksum)
+      .getOrElse(throw new Exception(s"Could not find digest [$digestType/$digestValue] for $fedoraFileId $file in manifest"))
+    if (checksum != digestValue)
+      throw new Exception(s"checksum error fedora[$digestValue] bag[$checksum] $fedoraFileId $file")
   }
 }

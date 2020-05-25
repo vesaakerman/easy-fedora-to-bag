@@ -26,13 +26,12 @@ import javax.naming.ldap.InitialLdapContext
 import nl.knaw.dans.easy.fedora2vault.TransformationType.SIMPLE
 import nl.knaw.dans.easy.fedora2vault.fixture.{ AudienceSupport, FileSystemSupport, TestSupportFixture }
 import org.scalamock.scalatest.MockFactory
-import org.scalatest.TryValues
 import resource.managed
 
 import scala.util.{ Failure, Success, Try }
 import scala.xml.XML
 
-class AppSpec extends TestSupportFixture with TryValues with MockFactory with FileSystemSupport with AudienceSupport {
+class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport with AudienceSupport {
   implicit val logFile: File = testDir / "log.txt"
 
   override def beforeEach(): Unit = {
@@ -105,12 +104,12 @@ class AppSpec extends TestSupportFixture with TryValues with MockFactory with Fi
     expectedManagedStreams(app.fedoraProvider,
       (testDir / "additional-license").write("lalala"),
       (testDir / "dataset-license").write("blablabla"),
-      (testDir / "manifest-sha1.txt").write("rabarbera"),
     )
 
-    app.simpleTransform("easy-dataset:17", testDir / "bags" / UUID.randomUUID.toString) should matchPattern {
-      case Success(CsvRecord("easy-dataset:17", "10.17026/test-Iiib-z9p-4ywa", "user001", SIMPLE, _, "OK")) =>
-    }
+    val uuid = UUID.randomUUID
+    app.simpleTransform("easy-dataset:17", testDir / "bags" / uuid.toString) shouldBe
+      Success(CsvRecord("easy-dataset:17", "10.17026/test-Iiib-z9p-4ywa", "user001", SIMPLE, uuid, "OK"))
+
     val metadata = (testDir / "bags").children.next() / "metadata"
     (metadata / "depositor-info/depositor-agreement.pdf").contentAsString shouldBe "blablabla"
     (metadata / "license.pdf").contentAsString shouldBe "lalala"
@@ -129,13 +128,13 @@ class AppSpec extends TestSupportFixture with TryValues with MockFactory with Fi
     expectAUser(app.ldapContext)
     expectedFoXmls(app.fedoraProvider, sampleFoXML / "streaming.xml", sampleFoXML / "easy-file-35.xml")
     expectedSubordinates(app.fedoraProvider, "easy-file:35")
-    expectedManagedStreams(app.fedoraProvider,
-      (testDir / "something.txt").writeText("don't care")
-    )
+    expectedManagedStreams(app.fedoraProvider, mockContentOfFile35)
 
-    app.simpleTransform("easy-dataset:13", testDir / "bags" / UUID.randomUUID.toString) should matchPattern {
-      case Success(CsvRecord("easy-dataset:13", null, "user001", SIMPLE, _, "OK")) =>
-    }
+    val uuid = UUID.randomUUID
+    val triedRecord = app.simpleTransform("easy-dataset:13", testDir / "bags" / uuid.toString)
+    triedRecord shouldBe
+      Success(CsvRecord("easy-dataset:13", null, "user001", SIMPLE, uuid, "OK"))
+
     val metadata = (testDir / "bags").children.next() / "metadata"
     metadata.list.toSeq.map(_.name)
       .sortBy(identity) shouldBe Seq("amd.xml", "dataset.xml", "depositor-info", "emd.xml", "files.xml")
@@ -145,9 +144,9 @@ class AppSpec extends TestSupportFixture with TryValues with MockFactory with Fi
       """<?xml version='1.0' encoding='UTF-8'?>
         |<files
         |xsi:schemaLocation="http://easy.dans.knaw.nl/schemas/bag/metadata/files/ https://easy.dans.knaw.nl/schemas/bag/metadata/files/files.xsd" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://easy.dans.knaw.nl/schemas/bag/metadata/files/" xmlns:dcterms="http://purl.org/dc/terms/">
-        |<file filepath="data/original/P1130783.JPG">
-        |<dcterms:title>P1130783.JPG</dcterms:title>
-        |<dcterms:format>image/jpeg</dcterms:format>
+        |<file filepath="data/original/something.txt">
+        |<dcterms:title>something.txt</dcterms:title>
+        |<dcterms:format>text/plain</dcterms:format>
         |<accessibleToRights>RESTRICTED_REQUEST</accessibleToRights>
         |<visibleToRights>ANONYMOUS</visibleToRights>
         |</file>
@@ -171,13 +170,15 @@ class AppSpec extends TestSupportFixture with TryValues with MockFactory with Fi
       ),
     )
     expectedSubordinates(app.fedoraProvider, "easy-file:35")
-    expectedManagedStreams(app.fedoraProvider,
-      (testDir / "something.txt").writeText("don't care")
-    )
+    expectedManagedStreams(app.fedoraProvider, mockContentOfFile35)
 
     app.simpleTransform("easy-dataset:13", testDir / "bags" / UUID.randomUUID.toString) should matchPattern {
       case Failure(e) if e.getMessage == "No <visibleTo> in EASY_FILE_METADATA for easy-file:35" =>
     }
+  }
+
+  private def mockContentOfFile35 = {
+    (testDir / "something.txt").writeText("mocked content of easy-file:35")
   }
 
   private def expectedSubordinates(fedoraProvider: => FedoraProvider, expectedIds: String*): Unit = {
