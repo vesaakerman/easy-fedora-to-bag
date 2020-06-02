@@ -16,6 +16,7 @@
 package nl.knaw.dans.easy.fedora2vault
 
 import java.io.{ FileInputStream, StringWriter }
+import java.net.URI
 import java.util.UUID
 
 import better.files.File
@@ -42,22 +43,26 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
 
   private class MockedLdapContext extends InitialLdapContext(new java.util.Hashtable[String, String](), null)
 
+  private class MockedBagIndex extends BagIndex(new URI("http://localhost:20120/"))
+
   private class MockedApp() extends EasyFedora2vaultApp(null) {
     override lazy val fedoraProvider: FedoraProvider = mock[FedoraProvider]
     override lazy val ldapContext: InitialLdapContext = mock[MockedLdapContext]
+    override lazy val bagIndex: BagIndex = mock[MockedBagIndex]
   }
 
   private class OverriddenApp extends MockedApp {
     /** overrides the method called by the method under test */
     override def simpleTransform(datasetId: DatasetId, outputDir: File): Try[CsvRecord] = {
-      if (datasetId.startsWith("fatal"))
-        Failure(new FedoraClientException(300, "mocked exception"))
-      else if (!datasetId.startsWith("success")) {
-        outputDir.createFile().writeText(datasetId)
-        Failure(new Exception(datasetId))
-      } else {
-        outputDir.createFile().writeText(datasetId)
-        Success(CsvRecord(datasetId, "", "", SIMPLE, UUID.randomUUID(), "OK"))
+      datasetId match {
+        case _ if datasetId.startsWith("fatal") =>
+          Failure(new FedoraClientException(300, "mocked exception"))
+        case _ if !datasetId.startsWith("success") =>
+          outputDir.createFile().writeText(datasetId)
+          Failure(new Exception(datasetId))
+        case _ =>
+          outputDir.createFile().writeText(datasetId)
+          Success(CsvRecord(datasetId, UUID.randomUUID(), "", "", SIMPLE, "OK"))
       }
     }
   }
@@ -68,9 +73,9 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
     val sw = new StringWriter()
     new OverriddenApp().simpleTransForms(ids, outputDir, sw) shouldBe Success("OK")
     sw.toString should (fullyMatch regex
-      """easyDatasetId,doi,depositor,transformationType,uuid,comment
-        |success:1,,,simple,.*,OK
-        |success:2,,,simple,.*,OK
+      """easyDatasetId,uuid,doi,depositor,transformationType,comment
+        |success:1,.*,,,simple,OK
+        |success:2,.*,,,simple,OK
         |""".stripMargin
       )
     outputDir.list.toSeq should have length 2
@@ -84,10 +89,10 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
       case Failure(t) if t.getMessage == "mocked exception" =>
     }
     sw.toString should (fullyMatch regex
-      """easyDatasetId,doi,depositor,transformationType,uuid,comment
-        |success:1,,,simple,.*,OK
-        |failure:2,,,simple,.*,FAILED: java.lang.Exception: failure:2
-        |success:3,,,simple,.*,OK
+      """easyDatasetId,uuid,doi,depositor,transformationType,comment
+        |success:1,.*,,,simple,OK
+        |failure:2,.*,,,simple,FAILED: java.lang.Exception: failure:2
+        |success:3,.*,,,simple,OK
         |""".stripMargin
       )
     outputDir.list.toSeq should have length 3
@@ -96,9 +101,8 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
   "simpleTransform" should "process DepositApi" in {
     val app = new MockedApp()
     implicit val fedoraProvider: FedoraProvider = app.fedoraProvider
-    expectedAudiences(Map(
-      "easy-discipline:77" -> "D13200",
-    ))
+    expectedAudiences(Map("easy-discipline:77" -> "D13200"))
+    expectNothingFrom(app.bagIndex)
     expectedSubordinates(app.fedoraProvider)
     expectedFoXmls(app.fedoraProvider, sampleFoXML / "DepositApi.xml")
     expectedManagedStreams(app.fedoraProvider,
@@ -108,7 +112,7 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
 
     val uuid = UUID.randomUUID
     app.simpleTransform("easy-dataset:17", testDir / "bags" / uuid.toString) shouldBe
-      Success(CsvRecord("easy-dataset:17", "10.17026/test-Iiib-z9p-4ywa", "user001", SIMPLE, uuid, "OK"))
+      Success(CsvRecord("easy-dataset:17", uuid, "10.17026/test-Iiib-z9p-4ywa", "user001", SIMPLE, "OK"))
 
     val metadata = (testDir / "bags").children.next() / "metadata"
     (metadata / "depositor-info/depositor-agreement.pdf").contentAsString shouldBe "blablabla"
@@ -127,13 +131,14 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
     ))
     expectAUser(app.ldapContext)
     expectedFoXmls(app.fedoraProvider, sampleFoXML / "streaming.xml", sampleFoXML / "easy-file-35.xml")
+    expectNothingFrom(app.bagIndex)
     expectedSubordinates(app.fedoraProvider, "easy-file:35")
     expectedManagedStreams(app.fedoraProvider, mockContentOfFile35)
 
     val uuid = UUID.randomUUID
     val triedRecord = app.simpleTransform("easy-dataset:13", testDir / "bags" / uuid.toString)
     triedRecord shouldBe
-      Success(CsvRecord("easy-dataset:13", null, "user001", SIMPLE, uuid, "OK"))
+      Success(CsvRecord("easy-dataset:13", uuid, "10.17026/mocked-Iiib-z9p-4ywa", "user001", SIMPLE, "OK"))
 
     val metadata = (testDir / "bags").children.next() / "metadata"
     metadata.list.toSeq.map(_.name)
@@ -169,6 +174,7 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
           .filterNot(_.contains("<visibleTo>")).mkString("\n")
       ),
     )
+    expectNothingFrom(app.bagIndex)
     expectedSubordinates(app.fedoraProvider, "easy-file:35")
     expectedManagedStreams(app.fedoraProvider, mockContentOfFile35)
 
@@ -183,6 +189,10 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
 
   private def expectedSubordinates(fedoraProvider: => FedoraProvider, expectedIds: String*): Unit = {
     (fedoraProvider.getSubordinates(_: String)) expects * once() returning Success(expectedIds)
+  }
+
+  private def expectNothingFrom(bagIndex: => BagIndex): Unit = {
+    (bagIndex.bagByDoi(_: String)) expects * once() returning Success(None)
   }
 
   private def expectedManagedStreams(fedoraProvider: => FedoraProvider, expectedObjects: File*): Unit = {

@@ -22,19 +22,15 @@ import javax.xml.XMLConstants
 import javax.xml.transform.Source
 import javax.xml.transform.stream.StreamSource
 import javax.xml.validation.SchemaFactory
-import nl.knaw.dans.easy.fedora2vault.fixture.{ AudienceSupport, TestSupportFixture }
+import nl.knaw.dans.easy.fedora2vault.fixture.{ AudienceSupport, EmdSupport, TestSupportFixture }
 import nl.knaw.dans.pf.language.emd.EasyMetadataImpl
 import nl.knaw.dans.pf.language.emd.binding.EmdUnmarshaller
 
 import scala.util.{ Failure, Success, Try }
 import scala.xml._
 
-class DdmSpec extends TestSupportFixture with AudienceSupport {
+class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport {
 
-  private val emdNS = "http://easy.dans.knaw.nl/easy/easymetadata/"
-  private val easNS = "http://easy.dans.knaw.nl/easy/easymetadata/eas/"
-  private val dctNS = "http://purl.org/dc/terms/"
-  private val dcNS = "http://purl.org/dc/elements/1.1/"
   private lazy val triedSchema = Try(SchemaFactory
     .newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI)
     .newSchema(Array(new StreamSource("https://easy.dans.knaw.nl/schemas/md/ddm/ddm.xsd")).toArray[Source])
@@ -98,8 +94,7 @@ class DdmSpec extends TestSupportFixture with AudienceSupport {
   }
 
   "descriptions" should "all appear" in {
-    toEmdObject(
-      <emd:easymetadata xmlns:emd={ emdNS } xmlns:eas={ easNS } xmlns:dct={ dctNS } xmlns:dc={ dcNS } emd:version="0.1">
+    val emd = parseEmdContent(Seq(
         <emd:description>
           <dc:description>abstract</dc:description>
           <dc:description>Suggestions for data usage: remark1</dc:description>
@@ -107,8 +102,8 @@ class DdmSpec extends TestSupportFixture with AudienceSupport {
           <dct:tableOfContents>rabar</dct:tableOfContents>
           <dct:abstract>blabl</dct:abstract>
         </emd:description>
-      </emd:easymetadata>
-    ).flatMap(DDM(_, Seq.empty)).map(toStripped) shouldBe Success(
+    ))
+    DDM(emd, Seq.empty).map(toStripped) shouldBe Success(
       s"""<ddm:DDM
          |xsi:schemaLocation="http://easy.dans.knaw.nl/schemas/md/ddm/ https://easy.dans.knaw.nl/schemas/md/ddm/ddm.xsd">
          |  <ddm:profile>
@@ -127,8 +122,7 @@ class DdmSpec extends TestSupportFixture with AudienceSupport {
   }
 
   "relations" should "all appear" in {
-    toEmdObject(
-      <emd:easymetadata xmlns:emd={ emdNS } xmlns:eas={ easNS } xmlns:dct={ dctNS } xmlns:dc={ dcNS } emd:version="0.1">
+    val emd = parseEmdContent(Seq(
         <emd:relation>
           <dct:hasVersion eas:scheme="ISSN">my-issn-related-identifier</dct:hasVersion>
           <dct:requires eas:scheme="ISBN">my-isbn-related-identifier</dct:requires>
@@ -159,8 +153,8 @@ class DdmSpec extends TestSupportFixture with AudienceSupport {
               <eas:subject-link>http://persistent-identifier.nl/urn:nbn:nl:ui:test-urn-alternative-identifier</eas:subject-link>
           </eas:isFormatOf>
         </emd:relation>
-      </emd:easymetadata>
-    ).flatMap(DDM(_, Seq.empty)).map(toStripped) shouldBe Success( // TODO implemented quick and dirty
+    ))
+    DDM(emd, Seq.empty).map(toStripped) shouldBe Success( // TODO implemented quick and dirty
       s"""<ddm:DDM
          |xsi:schemaLocation="http://easy.dans.knaw.nl/schemas/md/ddm/ https://easy.dans.knaw.nl/schemas/md/ddm/ddm.xsd">
          |  <ddm:profile>
@@ -191,15 +185,14 @@ class DdmSpec extends TestSupportFixture with AudienceSupport {
   }
 
   "license" should "be copied from <dct:license>" in {
-    toEmdObject(
-      <emd:easymetadata xmlns:emd={ emdNS } xmlns:eas={ easNS } xmlns:dct={ dctNS } xmlns:dc={ dcNS } emd:version="0.1">
+    val emd = parseEmdContent(Seq(
         <emd:rights>
             <dct:accessRights eas:schemeId="common.dct.accessrights">ACCESS_ELSEWHERE</dct:accessRights>
             <dct:license>http://dans.knaw.nl/en/about/organisation-and-policy/legal-information/DANSLicence.pdf</dct:license>
             <dct:license eas:scheme="Easy2 version 1">accept</dct:license>
         </emd:rights>
-      </emd:easymetadata>
-    ).flatMap(DDM(_, Seq.empty)).map(toStripped) shouldBe Success(
+    ))
+    DDM(emd, Seq.empty).map(toStripped) shouldBe Success(
       s"""<ddm:DDM
          |xsi:schemaLocation="http://easy.dans.knaw.nl/schemas/md/ddm/ https://easy.dans.knaw.nl/schemas/md/ddm/ddm.xsd">
          |  <ddm:profile>
@@ -213,13 +206,12 @@ class DdmSpec extends TestSupportFixture with AudienceSupport {
   }
 
   it should "convert from OPEN_ACCESS" in { // as in streaming.xml
-    toEmdObject(
-      <emd:easymetadata xmlns:emd={ emdNS } xmlns:eas={ easNS } xmlns:dct={ dctNS } xmlns:dc={ dcNS } emd:version="0.1">
-        <emd:rights>
-            <dct:accessRights eas:schemeId="common.dct.accessrights">OPEN_ACCESS</dct:accessRights>
-        </emd:rights>
-      </emd:easymetadata>
-    ).flatMap(DDM(_, Seq.empty)).map(toStripped) shouldBe Success(
+    val emd = parseEmdContent(Seq(
+      <emd:rights>
+          <dct:accessRights eas:schemeId="common.dct.accessrights">OPEN_ACCESS</dct:accessRights>
+      </emd:rights>
+    ))
+    DDM(emd, Seq.empty).map(toStripped) shouldBe Success(
       s"""<ddm:DDM
          |xsi:schemaLocation="http://easy.dans.knaw.nl/schemas/md/ddm/ https://easy.dans.knaw.nl/schemas/md/ddm/ddm.xsd">
          |  <ddm:profile>
@@ -233,14 +225,13 @@ class DdmSpec extends TestSupportFixture with AudienceSupport {
   }
 
   it should "convert from REQUEST_PERMISSION" in { // as in TalkOfEurope.xml
-    toEmdObject(
-      <emd:easymetadata xmlns:emd={ emdNS } xmlns:eas={ easNS } xmlns:dct={ dctNS } xmlns:dc={ dcNS } emd:version="0.1">
+    val emd = parseEmdContent(Seq(
         <emd:rights>
             <dct:accessRights eas:schemeId="common.dct.accessrights">REQUEST_PERMISSION</dct:accessRights>
             <dct:license>accept</dct:license>
         </emd:rights>
-      </emd:easymetadata>
-    ).flatMap(DDM(_, Seq.empty)).map(toStripped) shouldBe Success(
+    ))
+    DDM(emd, Seq.empty).map(toStripped) shouldBe Success(
       s"""<ddm:DDM
          |xsi:schemaLocation="http://easy.dans.knaw.nl/schemas/md/ddm/ https://easy.dans.knaw.nl/schemas/md/ddm/ddm.xsd">
          |  <ddm:profile>
@@ -254,12 +245,8 @@ class DdmSpec extends TestSupportFixture with AudienceSupport {
   }
 
   "spatial" should "render invalid DDM" in { // TODO until everything is implemented
-    val triedDdm = toEmdObject(
-      <emd:easymetadata xmlns:emd={ emdNS } xmlns:eas={ easNS } xmlns:dct={ dctNS } xmlns:dc={ dcNS } emd:version="0.1">
-        { emdTitle }
-        { emdCreator }
-        { emdDescription }
-        { emdDates }
+    val emd = parseEmdContent(Seq(
+      emdTitle, emdCreator, emdDescription, emdDates,
         <emd:coverage>
           <eas:spatial>
               <eas:place/>
@@ -268,30 +255,24 @@ class DdmSpec extends TestSupportFixture with AudienceSupport {
                   <eas:y>463000</eas:y>
               </eas:point>
           </eas:spatial>
-        </emd:coverage>
-        { emdRights }
-      </emd:easymetadata>
-    ).flatMap(DDM(_, Seq("D13200")))
-    validate(triedDdm.map(toS)) should matchPattern {
+        </emd:coverage>,
+      emdRights,
+    ))
+    validate(DDM(emd, Seq("D13200")).map(toS)) should matchPattern {
       case Failure(e) if e.getMessage.contains("not:implemented") =>
     }
   }
 
   "subject" should "succeed" in {
-    val triedString = toEmdObject(
-      <emd:easymetadata xmlns:emd={ emdNS } xmlns:eas={ easNS } xmlns:dct={ dctNS } xmlns:dc={ dcNS } emd:version="0.1">
-        { emdTitle }
-        { emdCreator }
-        <emd:subject>
-            <dc:subject eas:scheme="ABR" eas:schemeId="archaeology.dc.subject">DEPO</dc:subject>
-            <dc:subject>hello world</dc:subject>
-        </emd:subject>
-        { emdDescription }
-        { emdDates }
-        { emdRights }
-      </emd:easymetadata>
-    ).flatMap(DDM(_, Seq("D35400"))).map(toS)
-    triedString.map(strip) shouldBe Success(
+    val emd = parseEmdContent(Seq(
+      emdTitle, emdCreator,
+      <emd:subject>
+          <dc:subject eas:scheme="ABR" eas:schemeId="archaeology.dc.subject">DEPO</dc:subject>
+          <dc:subject>hello world</dc:subject>
+      </emd:subject>,
+      emdDescription, emdDates, emdRights,
+    ))
+    DDM(emd, Seq("D35400")).map(toS).map(strip) shouldBe Success(
       s"""<ddm:DDM
          |xsi:schemaLocation="http://easy.dans.knaw.nl/schemas/md/ddm/ https://easy.dans.knaw.nl/schemas/md/ddm/ddm.xsd">
          |  <ddm:profile>
@@ -310,19 +291,17 @@ class DdmSpec extends TestSupportFixture with AudienceSupport {
          |  </ddm:dcmiMetadata>
          |</ddm:DDM>
          |""".stripMargin)
-    validate(triedString) shouldBe a[Success[_]]
   }
 
   it should "generate not-implemented" in {
-    toEmdObject(
-      <emd:easymetadata xmlns:emd={ emdNS } xmlns:eas={ easNS } xmlns:dct={ dctNS } xmlns:dc={ dcNS } emd:version="0.1">
+    val emd = parseEmdContent(Seq(
         <emd:subject>
             <dc:subject eas:scheme="BSS0" eas:schemeId="common.dc.type0" xml:lang="nld-NLD">subject 0</dc:subject>
             <dc:subject eas:scheme="BSS1" eas:schemeId="common.dc.type1" xml:lang="nld-NLD">subject 1</dc:subject>
             <dc:subject xml:lang="nld-NLD" eas:scheme="BSS0">subject zero</dc:subject>
         </emd:subject>
-      </emd:easymetadata>
-    ).flatMap(DDM(_, Seq.empty)).map(toStripped) shouldBe Success(
+    ))
+    DDM(emd, Seq.empty).map(toS).map(strip) shouldBe Success(
       s"""<ddm:DDM
          |xsi:schemaLocation="http://easy.dans.knaw.nl/schemas/md/ddm/ https://easy.dans.knaw.nl/schemas/md/ddm/ddm.xsd">
          |  <ddm:profile>
@@ -339,8 +318,7 @@ class DdmSpec extends TestSupportFixture with AudienceSupport {
   }
 
   "author" should "succeed" in {
-    toEmdObject(
-      <emd:easymetadata xmlns:emd={ emdNS } xmlns:eas={ easNS } xmlns:dct={ dctNS } xmlns:dc={ dcNS } emd:version="0.1">
+    val emd = parseEmdContent(Seq(
         <emd:creator>
           <eas:creator>
             <eas:title>Drs</eas:title>
@@ -365,8 +343,8 @@ class DdmSpec extends TestSupportFixture with AudienceSupport {
               <eas:entityId eas:identification-system="https://orcid.org/" eas:scheme="ORCID">0000-0001-2281-955X</eas:entityId>
           </eas:creator>
         </emd:creator>
-      </emd:easymetadata>
-    ).flatMap(DDM(_, Seq.empty)).map(toStripped) shouldBe Success(
+    ))
+    DDM(emd, Seq.empty).map(toS).map(strip) shouldBe Success(
       s"""<ddm:DDM
          |xsi:schemaLocation="http://easy.dans.knaw.nl/schemas/md/ddm/ https://easy.dans.knaw.nl/schemas/md/ddm/ddm.xsd">
          |  <ddm:profile>
@@ -410,14 +388,12 @@ class DdmSpec extends TestSupportFixture with AudienceSupport {
   }
 
   "dates" should "use created for available" in {
-    implicit val fedoraProvider: FedoraProvider = mock[FedoraProvider]
-    toEmdObject(
-      <emd:easymetadata xmlns:emd={ emdNS } xmlns:eas={ easNS } xmlns:dct={ dctNS } xmlns:dc={ dcNS } emd:version="0.1">
+    val emd = parseEmdContent(Seq(
           <emd:date>
               <dct:created>03-2013</dct:created>
           </emd:date>
-      </emd:easymetadata>
-    ).flatMap(DDM(_, Seq.empty)).map(toStripped) shouldBe Success(
+    ))
+    DDM(emd, Seq.empty).map(toS).map(strip) shouldBe Success(
       s"""<ddm:DDM
          |xsi:schemaLocation="http://easy.dans.knaw.nl/schemas/md/ddm/ https://easy.dans.knaw.nl/schemas/md/ddm/ddm.xsd">
          |  <ddm:profile>
@@ -433,8 +409,7 @@ class DdmSpec extends TestSupportFixture with AudienceSupport {
   }
 
   it should "render only the first available" in {
-    toEmdObject(
-      <emd:easymetadata xmlns:emd={ emdNS } xmlns:eas={ easNS } xmlns:dct={ dctNS } xmlns:dc={ dcNS } emd:version="0.1">
+    val emd = parseEmdContent(Seq(
           <emd:date>
               <dc:date>gisteren</dc:date>
               <dc:date>11-2013</dc:date>
@@ -460,8 +435,8 @@ class DdmSpec extends TestSupportFixture with AudienceSupport {
               <eas:dateCopyrighted eas:scheme="W3CDTF" eas:format="MONTH">1907-04-01T00:00:00.000+00:19:32</eas:dateCopyrighted>
               <eas:dateSubmitted eas:scheme="W3CDTF" eas:format="MONTH">1908-04-01T00:00:00.000+00:19:32</eas:dateSubmitted>
           </emd:date>
-      </emd:easymetadata>
-    ).flatMap(DDM(_, Seq.empty)).map(toStripped) shouldBe Success(
+    ))
+    DDM(emd, Seq.empty).map(toS).map(strip) shouldBe Success(
       s"""<ddm:DDM
          |xsi:schemaLocation="http://easy.dans.knaw.nl/schemas/md/ddm/ https://easy.dans.knaw.nl/schemas/md/ddm/ddm.xsd">
          |  <ddm:profile>
