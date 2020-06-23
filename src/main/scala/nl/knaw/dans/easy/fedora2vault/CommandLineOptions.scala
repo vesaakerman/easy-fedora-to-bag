@@ -53,14 +53,14 @@ class CommandLineOptions(args: Array[String], configuration: Configuration) exte
   private val inputPath: ScallopOption[Path] = opt(name = "input-file", short = 'i',
     descr = "File containing a newline-separated list of easy-dataset-ids to be transformed. Use either this or the dataset-id argument")
   val inputFile: ScallopOption[File] = inputPath.map(File(_))
-  private val outputDirPath: ScallopOption[Path] = opt(name = "output-dir", short = 'o',
+  private val outputDirPath: ScallopOption[Path] = opt(name = "output-dir", short = 'o', required = true,
     descr = "Empty directory in which to stage the created AIP bags. It will be created if it doesn't exist.")
   val outputDir: ScallopOption[File] = outputDirPath.map(File(_))
   val depositor: ScallopOption[Depositor] = opt(name = "depositor", short = 'u',
     descr = "The depositor for these datasets. If provided, only datasets from this depositor are transformed.")
   private val logFilePath: ScallopOption[Path] = opt(name = "log-file", short = 'l',
-    descr = "The name of the logfile in csv format. If not provided a file easy-fedora2vault-<timestamp>.csv will be created in the home-dir of the user.",
-    default = Some(Paths.get(Properties.userHome).resolve(s"easy-fedora2vault-$now.csv")))
+    descr = s"The name of the logfile in csv format. If not provided a file $printedName-<timestamp>.csv will be created in the home-dir of the user.",
+    default = Some(Paths.get(Properties.userHome).resolve(s"$printedName-$now.csv")))
   val logFile: ScallopOption[File] = logFilePath.map(File(_))
   val strictMode: ScallopOption[Boolean] = opt(name = "strict", short = 's',
     descr = "If provided, the transformation will check whether the datasets adhere to the requirements of the chosen transformation.")

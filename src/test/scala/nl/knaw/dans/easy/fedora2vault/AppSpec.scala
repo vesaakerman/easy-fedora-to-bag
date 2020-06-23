@@ -24,7 +24,6 @@ import com.yourmediashelf.fedora.client.FedoraClientException
 import javax.naming.NamingEnumeration
 import javax.naming.directory.{ BasicAttributes, SearchControls, SearchResult }
 import javax.naming.ldap.InitialLdapContext
-import nl.knaw.dans.easy.fedora2vault.TransformationType.SIMPLE
 import nl.knaw.dans.easy.fedora2vault.fixture.{ AudienceSupport, FileSystemSupport, TestSupportFixture }
 import org.scalamock.scalatest.MockFactory
 import resource.managed
@@ -53,16 +52,19 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
 
   private class OverriddenApp extends MockedApp {
     /** overrides the method called by the method under test */
-    override def simpleTransform(datasetId: DatasetId, outputDir: File): Try[CsvRecord] = {
+    override def simpleTransform(datasetId: DatasetId, outputDir: File, strict: Boolean): Try[CsvRecord] = {
       datasetId match {
         case _ if datasetId.startsWith("fatal") =>
           Failure(new FedoraClientException(300, "mocked exception"))
+        case _ if datasetId.startsWith("notSimple") =>
+          outputDir.createFile().writeText(datasetId)
+          Failure(NotSimpleException("mocked"))
         case _ if !datasetId.startsWith("success") =>
           outputDir.createFile().writeText(datasetId)
           Failure(new Exception(datasetId))
         case _ =>
           outputDir.createFile().writeText(datasetId)
-          Success(CsvRecord(datasetId, UUID.randomUUID(), "", "", SIMPLE, "OK"))
+          Success(CsvRecord(datasetId, UUID.randomUUID(), "", "", "simple", "OK"))
       }
     }
   }
@@ -71,7 +73,7 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
     val ids = Iterator("success:1", "success:2")
     val outputDir = (testDir / "output").createDirectories()
     val sw = new StringWriter()
-    new OverriddenApp().simpleTransForms(ids, outputDir, sw) shouldBe Success("OK")
+    new OverriddenApp().simpleTransForms(ids, outputDir, strict = true, sw) shouldBe Success("no fedora/IO errors")
     sw.toString should (fullyMatch regex
       """easyDatasetId,uuid,doi,depositor,transformationType,comment
         |success:1,.*,,,simple,OK
@@ -82,20 +84,21 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
   }
 
   it should "report failure" in {
-    val ids = Iterator("success:1", "failure:2", "success:3", "fatal:4", "success:5")
+    val ids = Iterator("success:1", "failure:2", "notSimple:3", "success:4", "fatal:5", "success:6")
     val outputDir = (testDir / "output").createDirectories()
     val sw = new StringWriter()
-    new OverriddenApp().simpleTransForms(ids, outputDir, sw) should matchPattern {
+    new OverriddenApp().simpleTransForms(ids, outputDir, strict = true, sw) should matchPattern {
       case Failure(t) if t.getMessage == "mocked exception" =>
     }
     sw.toString should (fullyMatch regex
       """easyDatasetId,uuid,doi,depositor,transformationType,comment
         |success:1,.*,,,simple,OK
         |failure:2,.*,,,simple,FAILED: java.lang.Exception: failure:2
-        |success:3,.*,,,simple,OK
+        |notSimple:3,.*,,,simple,FAILED: nl.knaw.dans.easy.fedora2vault.NotSimpleException: mocked
+        |success:4,.*,,,simple,OK
         |""".stripMargin
       )
-    outputDir.list.toSeq should have length 3
+    outputDir.list.toSeq should have length 4
   }
 
   "simpleTransform" should "process DepositApi" in {
@@ -111,8 +114,8 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
     )
 
     val uuid = UUID.randomUUID
-    app.simpleTransform("easy-dataset:17", testDir / "bags" / uuid.toString) shouldBe
-      Success(CsvRecord("easy-dataset:17", uuid, "10.17026/test-Iiib-z9p-4ywa", "user001", SIMPLE, "OK"))
+    app.simpleTransform("easy-dataset:17", testDir / "bags" / uuid.toString, strict = true) shouldBe
+      Success(CsvRecord("easy-dataset:17", uuid, "10.17026/test-Iiib-z9p-4ywa", "user001", "simple", "OK"))
 
     val metadata = (testDir / "bags").children.next() / "metadata"
     (metadata / "depositor-info/depositor-agreement.pdf").contentAsString shouldBe "blablabla"
@@ -121,6 +124,47 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
       Seq("amd.xml", "dataset.xml", "depositor-info", "emd.xml", "files.xml", "license.pdf")
     (metadata / "depositor-info").list.toSeq.map(_.name).sortBy(identity) shouldBe
       Seq("agreements.xml", "depositor-agreement.pdf", "message-from-depositor.txt")
+  }
+
+  it should "report not strict simple violation" in {
+    val app = new MockedApp()
+    implicit val fedoraProvider: FedoraProvider = app.fedoraProvider
+    expectedAudiences(Map("easy-discipline:77" -> "D13200"))
+    expectNothingFrom(app.bagIndex)
+    expectedSubordinates(app.fedoraProvider, "easy-jumpoff:1")
+    expectedFoXmls(app.fedoraProvider, sampleFoXML / "DepositApi.xml")
+    expectedManagedStreams(app.fedoraProvider,
+      (testDir / "additional-license").write("lalala"),
+      (testDir / "dataset-license").write("blablabla"),
+    )
+
+    val uuid = UUID.randomUUID
+    app.simpleTransform("easy-dataset:17", testDir / "bags" / uuid.toString, strict = false) shouldBe
+      Success(CsvRecord("easy-dataset:17", uuid, "10.17026/test-Iiib-z9p-4ywa", "user001", "not strict simple", "Violates 2: has jump off"))
+
+    val metadata = (testDir / "bags").children.next() / "metadata"
+    (metadata / "depositor-info/depositor-agreement.pdf").contentAsString shouldBe "blablabla"
+    (metadata / "license.pdf").contentAsString shouldBe "lalala"
+    metadata.list.toSeq.map(_.name).sortBy(identity) shouldBe
+      Seq("amd.xml", "dataset.xml", "depositor-info", "emd.xml", "files.xml", "license.pdf")
+    (metadata / "depositor-info").list.toSeq.map(_.name).sortBy(identity) shouldBe
+      Seq("agreements.xml", "depositor-agreement.pdf", "message-from-depositor.txt")
+  }
+
+  it should "report strict simple violation" in {
+    val app = new MockedApp()
+    implicit val fedoraProvider: FedoraProvider = app.fedoraProvider
+    expectedAudiences(Map("easy-discipline:77" -> "D13200"))
+    expectNothingFrom(app.bagIndex)
+    expectedSubordinates(app.fedoraProvider, "easy-jumpoff:1")
+    expectedFoXmls(app.fedoraProvider, sampleFoXML / "DepositApi.xml")
+
+    val uuid = UUID.randomUUID
+    app.simpleTransform("easy-dataset:17", testDir / "bags" / uuid.toString, strict = true) should matchPattern {
+      case Failure(_: NotSimpleException) =>
+    }
+
+    (testDir / "bags") shouldNot exist
   }
 
   it should "process streaming" in {
@@ -136,9 +180,9 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
     expectedManagedStreams(app.fedoraProvider, mockContentOfFile35)
 
     val uuid = UUID.randomUUID
-    val triedRecord = app.simpleTransform("easy-dataset:13", testDir / "bags" / uuid.toString)
+    val triedRecord = app.simpleTransform("easy-dataset:13", testDir / "bags" / uuid.toString, strict = true)
     triedRecord shouldBe
-      Success(CsvRecord("easy-dataset:13", uuid, "10.17026/mocked-Iiib-z9p-4ywa", "user001", SIMPLE, "OK"))
+      Success(CsvRecord("easy-dataset:13", uuid, "10.17026/mocked-Iiib-z9p-4ywa", "user001", "simple", "OK"))
 
     val metadata = (testDir / "bags").children.next() / "metadata"
     metadata.list.toSeq.map(_.name)
@@ -178,7 +222,7 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
     expectedSubordinates(app.fedoraProvider, "easy-file:35")
     expectedManagedStreams(app.fedoraProvider, mockContentOfFile35)
 
-    app.simpleTransform("easy-dataset:13", testDir / "bags" / UUID.randomUUID.toString) should matchPattern {
+    app.simpleTransform("easy-dataset:13", testDir / "bags" / UUID.randomUUID.toString, strict = true) should matchPattern {
       case Failure(e) if e.getMessage == "No <visibleTo> in EASY_FILE_METADATA for easy-file:35" =>
     }
   }
@@ -192,7 +236,7 @@ class AppSpec extends TestSupportFixture with MockFactory with FileSystemSupport
   }
 
   private def expectNothingFrom(bagIndex: => BagIndex): Unit = {
-    (bagIndex.bagByDoi(_: String)) expects * once() returning Success(None)
+    (bagIndex.bagInfoByDoi(_: String)) expects * once() returning Success(None)
   }
 
   private def expectedManagedStreams(fedoraProvider: => FedoraProvider, expectedObjects: File*): Unit = {

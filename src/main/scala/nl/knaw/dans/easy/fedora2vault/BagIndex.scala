@@ -18,27 +18,40 @@ package nl.knaw.dans.easy.fedora2vault
 import java.io.IOException
 import java.net.URI
 
-import scalaj.http.Http
+import better.files.StringExtensions
+import scalaj.http.{ Http, HttpResponse }
 
 import scala.util.{ Failure, Try }
+import scala.xml.XML
 
 case class BagIndex(bagIndexUri: URI) {
 
   /** An IOException is fatal for the batch of datasets */
   private case class BagIndexException(msg: String, cause: Throwable) extends IOException(msg, cause)
 
-  private val url: URI = bagIndexUri.resolve("search")
+  private val url: URI = bagIndexUri.resolve("/search")
 
-  def bagByDoi(doi: String): Try[Option[String]] = Try {
+  def bagInfoByDoi(doi: String): Try[Option[String]] = for {
+    maybeString <- findBagInfo(doi)
+    maybeXml = maybeString.map(s => XML.load(s.inputStream))
+    maybeBagInfo = maybeXml.flatMap(xml => (xml \ "bag-info").theSeq.headOption)
+  } yield maybeBagInfo.map(_.toOneLiner)
+
+  protected def findBagInfo(doi: String): Try[Option[String]] = Try {
+    execute(doi)
+  }.recoverWith {
+    case t: Throwable => Failure(BagIndexException(s"DOI[$doi] url[$url]" + t.getMessage, t))
+  }.map {
+    case response if response.code == 404 => None
+    case response if response.code == 200 => Some(response.body)
+    case response =>
+      throw BagIndexException(s"Not expected response code from bag-index. url='${ url }', doi='$doi', response: ${ response.code } - ${ response.body }", null)
+  }
+
+  protected def execute(doi: String): HttpResponse[String] = {
     Http(url.toString)
       .param("doi", doi)
       .header("Accept", "text/xml")
       .asString
-  }.recoverWith {
-    case t: Throwable => Failure(BagIndexException(s"DOI[$doi] url[$url]" + t.getMessage, t))
-  }.map {
-    case response if response.code == 400 => None
-    case response if response.code == 200 => Some(s"$doi: ${response.body}")
-    case response => throw BagIndexException(s"Not expected response code from bag-index. url='${ url } }', doi='$doi', response: ${ response.code } - ${ response.body }", null)
   }
 }

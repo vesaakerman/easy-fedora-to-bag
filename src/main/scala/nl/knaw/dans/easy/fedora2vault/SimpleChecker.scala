@@ -19,18 +19,18 @@ import nl.knaw.dans.common.lang.dataset.AccessCategory.{ OPEN_ACCESS, REQUEST_PE
 import nl.knaw.dans.lib.logging.DebugEnhancedLogging
 import nl.knaw.dans.pf.language.emd.EasyMetadataImpl
 
-import scala.util.{ Failure, Success, Try }
+import scala.util.{ Success, Try }
 import scala.xml.Node
 
 case class NotSimpleException(msg: String) extends Exception(msg)
 
 case class SimpleChecker(bagIndex: BagIndex) extends DebugEnhancedLogging {
 
-  def isSimple(emd: EasyMetadataImpl, ddm: Node, amd: Node, jumpOff: Seq[String]): Try[Unit] = {
+  def violations(emd: EasyMetadataImpl, ddm: Node, amd: Node, jumpOff: Seq[String]): Try[Option[String]] = {
     val maybeDoi = Option(emd.getEmdIdentifier.getDansManagedDoi)
-    val triedVaultResponses = maybeDoi
-      .map(bagIndex.bagByDoi(_).map(_.toSeq))
-      .getOrElse(Success(Seq.empty)) // no DOI => no bag found by DOI
+    val triedMaybeVaultResponse: Try[Option[String]] = maybeDoi
+      .map(bagIndex.bagInfoByDoi)
+      .getOrElse(Success(None)) // no DOI => no bag found by DOI
     val violations = Seq(
       "1: DANS DOI" -> (if (maybeDoi.isEmpty) Seq("not found")
                         else Seq[String]()),
@@ -40,20 +40,17 @@ case class SimpleChecker(bagIndex: BagIndex) extends DebugEnhancedLogging {
       "4: invalid rights" -> findInvalidRights(emd),
       "5: invalid state" -> findInvalidState(amd),
       "6: DANS relations" -> findDansRelations(ddm),
-      "7: is in the vault" -> triedVaultResponses.getOrElse(Seq("IO exception")),
+      "7: is in the vault" -> triedMaybeVaultResponse.getOrElse(None).toSeq,
     ).filter(_._2.nonEmpty).toMap
 
     violations.foreach { case (rule, violations) =>
       violations.foreach(s => mockFriendlyWarn(s"violated $rule $s"))
     }
-    lazy val errorMessage: String = violations.keys
-      .map(_.replaceAll(":.*", ""))
-      .mkString("Not a simple dataset. Violates rule ", ", ", "")
-    for {
-      _ <- triedVaultResponses // an IOException is not a violation
-      _ <- if (violations.isEmpty) Success(())
-           else Failure(NotSimpleException(errorMessage))
-    } yield ()
+
+    triedMaybeVaultResponse.map(_ =>
+      if (violations.isEmpty) None
+      else Some(violations.keys.mkString("Violates ", "; ", ""))
+    )
   }
 
   /** An interpolated string is a method. It needs evaluation before passing in to define expectations. */
