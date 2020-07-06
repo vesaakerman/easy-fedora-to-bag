@@ -28,7 +28,7 @@ import javax.naming.ldap.InitialLdapContext
 import nl.knaw.dans.bag.ChecksumAlgorithm
 import nl.knaw.dans.bag.v0.DansV0Bag
 import nl.knaw.dans.easy.fedora2vault.Command.FeedBackMessage
-import nl.knaw.dans.easy.fedora2vault.FileItem.filesXml
+import nl.knaw.dans.easy.fedora2vault.FileItem.{ checkNotImplemented, filesXml }
 import nl.knaw.dans.easy.fedora2vault.FoXml.{ getEmd, _ }
 import nl.knaw.dans.easy.fedora2vault.TransformationType.SIMPLE
 import nl.knaw.dans.lib.error._
@@ -127,6 +127,7 @@ class EasyFedora2vaultApp(configuration: Configuration) extends DebugEnhancedLog
         .getOrElse(Success(()))
       fileItems <- fedoraIDs.filter(_.startsWith("easy-file:"))
         .toList.traverse(addPayloadFileTo(bag))
+      _ <- checkNotImplemented(fileItems, logger)
       _ <- addXmlMetadata(bag, "files.xml")(filesXml(fileItems))
       _ <- bag.save()
       doi = emd.getEmdIdentifier.getDansManagedDoi
@@ -162,7 +163,7 @@ class EasyFedora2vaultApp(configuration: Configuration) extends DebugEnhancedLog
     bag.addPayloadFile(content.serialize.inputStream, Paths.get(path))
   }
 
-  private def addPayloadFileTo(bag: DansV0Bag)(fedoraFileId: String): Try[FileItem] = {
+  private def addPayloadFileTo(bag: DansV0Bag)(fedoraFileId: String): Try[Node] = {
     val streamId = "EASY_FILE"
     for {
       foXml <- fedoraProvider.loadFoXml(fedoraFileId)
@@ -177,9 +178,9 @@ class EasyFedora2vaultApp(configuration: Configuration) extends DebugEnhancedLog
       maybeDigest = fileStream.flatMap(n => (n \\ "contentDigest").theSeq.headOption)
       _ <- maybeDigest.map(validate(bag.baseDir / s"data/$path", bag, fedoraFileId))
         .getOrElse(Success(logger.warn(s"No digest found for $fedoraFileId ${ fileStream.map(_.toOneLiner).getOrElse("") }")))
-      fileItem <- FileItem(fedoraFileId, foXml)
+      fileItem <- FileItem(foXml)
     } yield fileItem
-  }
+  }.recoverWith { case e => Failure(new Exception(s"$fedoraFileId ${ e.getMessage }", e)) }
 
   private def validate(file: File, bag: DansV0Bag, fedoraFileId: String)(maybeDigest: Node) = Try {
     val algorithms = Map(

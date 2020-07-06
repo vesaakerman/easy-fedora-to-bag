@@ -32,6 +32,9 @@ package object fedora2vault {
 
   def now: String = DateTime.now(DateTimeZone.UTC).toString(dateTimeFormatter)
 
+  /** An interpolated string is a method. It needs evaluation before passing in to define expectations. */
+  def mockFriendly(interpolated: String): String = interpolated
+
   private val prologue = """<?xml version='1.0' encoding='UTF-8'?>"""
   private val logPrinter = new PrettyPrinter(-1, 0)
   val printer = new PrettyPrinter(160, 2)
@@ -56,4 +59,5 @@ package object fedora2vault {
         .getOrElse(onSuccess)
     }
   }
+
 }

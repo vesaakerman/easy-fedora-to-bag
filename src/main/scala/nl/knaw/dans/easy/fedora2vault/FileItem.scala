@@ -15,48 +15,102 @@
  */
 package nl.knaw.dans.easy.fedora2vault
 
-import scala.util.Try
-import scala.xml.{ Elem, Node }
+import com.typesafe.scalalogging.Logger
 
-case class FileItem(xml: Node)
+import scala.util.{ Failure, Success, Try }
+import scala.xml.{ Elem, Node, NodeSeq, Text }
 
 object FileItem {
 
-  def filesXml(items: Seq[FileItem]): Elem =
-    <files xmlns:dcterms="http://purl.org/dc/terms/"
-           xmlns="http://easy.dans.knaw.nl/schemas/bag/metadata/files/"
+  private val baseNS = "http://easy.dans.knaw.nl/schemas/bag/metadata"
+
+  def filesXml(items: Seq[Node]): Elem =
+    <files xmlns:dct="http://purl.org/dc/terms/"
+           xmlns:afm={ s"$baseNS/afm/"}
+           xmlns={ s"$baseNS/files/" }
            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-           xsi:schemaLocation="http://easy.dans.knaw.nl/schemas/bag/metadata/files/ https://easy.dans.knaw.nl/schemas/bag/metadata/files/files.xsd"
+           xsi:schemaLocation={ s"$baseNS/files/ $baseNS/files/files.xsd" }
     >
-    { items.map(_.xml) }
+    { items }
     </files>
 
-  def apply(fedoraFileId: String, foXml: Node): Try[FileItem] = Try {
-    val streamId = "EASY_FILE_METADATA"
-    val fileMetadata = FoXml.getStreamRoot(streamId, foXml)
-      .getOrElse(throw new Exception(s"No $streamId for $fedoraFileId"))
+  def checkNotImplemented(fileItems: List[Node], logger: Logger): Try[Unit] = {
+    val incompleteItems = fileItems.filter(item => (item \ "notImplemented").nonEmpty)
+    incompleteItems.foreach(item =>
+      (item \ "notImplemented").foreach(tag =>
+        logger.warn(mockFriendly(s"${ (item \ "identifier").text } (${ item \@ "filepath" }) NOT IMPLEMENTED: ${ tag.text }"))
+      )
+    )
 
-    def get(tag: DatasetId) = {
-      val strings = (fileMetadata \\ tag).map(_.text)
-      if (strings.isEmpty)
-        throw new Exception(s"No <$tag> in $streamId for $fedoraFileId")
-      if (strings.tail.nonEmpty)
-        throw new Exception(s"Multiple times <$tag> in $streamId for $fedoraFileId")
-      strings.headOption.getOrElse("")
-    }
+    lazy val tags = incompleteItems.flatMap(item =>
+      (item \ "notImplemented").map(_.text.replaceAll(":.*", ""))
+    ).distinct
 
-    val visibleTo = get("visibleTo")
-    val accessibleTo = visibleTo.toUpperCase() match {
-      case "NONE" => "NONE"
-      case _ => get("accessibleTo")
-    }
-    new FileItem(
+    if (incompleteItems.isEmpty) Success(())
+    else Failure(new Exception(s"${ incompleteItems.size } file(s) with not implemented additional file metadata: $tags"))
+  }
+
+  def apply(foXml: Node): Try[Node] = {
+    FoXml.getFileMD(foXml).map { fileMetadata =>
+      def get(tag: String) = {
+        val strings = (fileMetadata \\ tag).map(_.text)
+        if (strings.isEmpty) throw new Exception(s"<$tag> not found")
+        if (strings.tail.nonEmpty) throw new Exception(s"Multiple times <$tag>")
+        strings.headOption.getOrElse("")
+      }
+
+      val visibleTo = get("visibleTo")
+      val accessibleTo = visibleTo.toUpperCase() match {
+        case "NONE" => "NONE"
+        case _ => get("accessibleTo")
+      }
       <file filepath={ "data/" + get("path") }>
-        <dcterms:title>{ get("name") }</dcterms:title>
-        <dcterms:format>{ get("mimeType") }</dcterms:format>
+        <dct:identifier>{ foXml \@ "PID" }</dct:identifier>
+        <dct:title>{ get("name") }</dct:title>
+        <dct:format>{ get("mimeType") }</dct:format>
+        { (fileMetadata \ "additional-metadata" \ "additional" \ "content").flatMap(convert) }
         <accessibleToRights>{ accessibleTo }</accessibleToRights>
         <visibleToRights>{ visibleTo }</visibleToRights>
       </file>
-    )
+    }
+  }
+
+  def convert(additionalContent: Node): NodeSeq = {
+    val hasArchivalName = (additionalContent \ "archival_name").nonEmpty // EASY-I
+    val hasOriginalFile = (additionalContent \ "original_file").nonEmpty // EASY-II
+    additionalContent.nonEmptyChildren.map {
+      case Elem(_, label, attributes, _, Text(value)) if attributes.nonEmpty => <notImplemented>{ s"$label(attributes: $attributes): $value" }</notImplemented>
+      case Elem(_, "file_name", _, _, _) if hasArchivalName && hasOriginalFile => <notImplemented>original_file AND archival_name</notImplemented>
+
+      case Elem(_, "original_file", _, _, Text(value)) => <dct:isFormatOf>{ value }</dct:isFormatOf>
+      case Elem(_, "file_name", _, _, Text(value)) if hasOriginalFile => <dct:title>{ value }</dct:title>
+
+      case Elem(_, "file_name", _, _, Text(value)) if hasArchivalName => <dct:isFormatOf>{ value }</dct:isFormatOf>
+      case Elem(_, "archival_name", _, _, Text(value)) => <dct:title>{ value }</dct:title>
+
+      case Elem(_, "case_quantity", _, _, Text(value)) if value.trim == "1" => Text("") // RAAP mis-interpretation
+      case Elem(_, "case_quantity", _, _, Text(value)) => <afm:case_quantity>{ value }</afm:case_quantity>
+
+      case Elem(_, "file_required", _, _, Text(value)) => <dct:requires>{ value }</dct:requires>
+      case Elem(_, "file_content", _, _, Text(value)) => <dct:abstract>{ value }</dct:abstract>
+      case Elem(_, label, _, _, Text(value)) if isNotes(label) => <afm:notes>{ value }</afm:notes>
+      case Elem(_, label, _, _, Text(value)) if asIs(label) => <tag>{ value }</tag>.copy(prefix = "afm", label = label)
+      case Elem(_, label, _, _, Text(value)) => <notImplemented>{ s"$label: $value" }</notImplemented>
+      case node => node // white space
+    }
+  }
+
+  private def asIs(label: String) = {
+    Seq(
+      "hardware", "software", "original_OS",
+      "file_category", "data_format", "file_type", "othmat_codebook", "data_format",
+      "data_collector", "collection_date", "time_period",
+      "geog_cover", "geog_unit", "local_georef", "mapprojection",
+      "analytic_units"
+    ).contains(label)
+  }
+
+  private def isNotes(label: String) = {
+    Seq("notes", "remarks", "file_notes", "file_remarks").contains(label)
   }
 }
