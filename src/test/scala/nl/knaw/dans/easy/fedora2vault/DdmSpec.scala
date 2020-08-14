@@ -15,27 +15,20 @@
  */
 package nl.knaw.dans.easy.fedora2vault
 
-import java.net.UnknownHostException
-
-import better.files.{ File, StringExtensions }
-import javax.xml.XMLConstants
-import javax.xml.transform.Source
-import javax.xml.transform.stream.StreamSource
-import javax.xml.validation.SchemaFactory
-import nl.knaw.dans.easy.fedora2vault.fixture.{ AudienceSupport, EmdSupport, TestSupportFixture }
+import better.files.File
+import nl.knaw.dans.easy.fedora2vault.fixture.{ AudienceSupport, EmdSupport, SchemaSupport, TestSupportFixture }
 import nl.knaw.dans.pf.language.emd.EasyMetadataImpl
 import nl.knaw.dans.pf.language.emd.binding.EmdUnmarshaller
 
-import scala.util.{ Failure, Success, Try }
+import scala.util.{ Success, Try }
 import scala.xml.Utility.trim
 import scala.xml._
 
-class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport {
+class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport with SchemaSupport {
 
-  private lazy val triedSchema = Try(SchemaFactory
-    .newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI)
-    .newSchema(Array(new StreamSource("https://easy.dans.knaw.nl/schemas/md/ddm/ddm.xsd")).toArray[Source])
-  )
+  override val schema = "https://easy.dans.knaw.nl/schemas/md/ddm/ddm.xsd"
+
+  private val schemaLocation = "http://easy.dans.knaw.nl/schemas/md/ddm/ https://easy.dans.knaw.nl/schemas/md/ddm/ddm.xsd"
   private val emdUnMarshaller = new EmdUnmarshaller(classOf[EasyMetadataImpl])
   private val emdTitle =
         <emd:title>
@@ -48,12 +41,6 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport {
                 <eas:entityId eas:scheme="DAI"></eas:entityId>
             </eas:creator>
         </emd:creator>
-  val ddmCreator = // resulting from emdCreator
-    """    <dcx-dai:creatorDetails>
-      |      <dcx-dai:organization>
-      |        <dcx-dai:name>DANS</dcx-dai:name>
-      |      </dcx-dai:organization>
-      |    </dcx-dai:creatorDetails>"""
   private val emdDescription =
         <emd:description>
             <dc:description>YYY</dc:description>
@@ -68,30 +55,45 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport {
             <dct:accessRights eas:schemeId="common.dcterms.accessrights">OPEN_ACCESS</dct:accessRights>
         </emd:rights>
 
+  /** result of the emd values above */
+  private def ddmProfile(audience: String) =
+       <ddm:profile>
+          <dc:title>XXX</dc:title>
+          <dct:description>YYY</dct:description>
+          <dcx-dai:creatorDetails>
+            <dcx-dai:organization>
+              <dcx-dai:name>DANS</dcx-dai:name>
+            </dcx-dai:organization>
+          </dcx-dai:creatorDetails>
+          <ddm:created>2017-09-30</ddm:created>
+          <ddm:available>2017-09-30</ddm:available>
+          <ddm:audience>{ audience }</ddm:audience>
+          <ddm:accessRights>OPEN_ACCESS</ddm:accessRights>
+        </ddm:profile>
+
   "streaming" should "get a valid DDM out of its EMD" in {
     val file = "streaming.xml"
     val triedDdm = getEmd(file).flatMap(DDM(_, Seq("D35400")))
-    triedDdm.map(toS).map(normalize(_)
-      .split("\n") // TODO dropping a line that would not validate
-      .filterNot(_.contains("""<dct:relation xsi:type="id-type:STREAMING_SURROGATE_RELATION">"""))
-      .mkString("\n")
-    ) shouldBe Success(expectedDDM(file).trim)
+    val expectedDdm = (File("src/test/resources/expected-ddm/") / file)
+      .contentAsString
+      .replaceAll(" +", " ")
+      .replaceAll("\n +<", "\n<").trim
+    triedDdm.map(normalized) shouldBe Success(expectedDdm)
   }
 
   "depositApi" should "produce the DDM provided by easy-deposit-api" in {
     val triedFoXml = Try(XML.loadFile((sampleFoXML / "DepositApi.xml").toJava))
-    val triedDdm = getEmd("DepositApi.xml")
-      .flatMap(DDM(_, Seq("D13200")))
-      .map(toS)
+    val triedDdm = getEmd("DepositApi.xml").flatMap(DDM(_, Seq("D13200")))
     triedDdm shouldBe a[Success[_]]
 
     // round trip test (foXml/EMD was created from the foXML/DDM by easy-ingest-flow)
-    triedDdm.map(normalize) shouldBe triedFoXml.map(foXml =>
-      normalize(toS((foXml \\ "DDM").head))
+    triedDdm.map(normalized) shouldBe triedFoXml.map(foXml =>
+      normalized((foXml \\ "DDM").head)
         .replaceAll("dcterms:", "dct:")
         .replaceAll("""<dcx-dai:name xml:lang="nld">""", """<dcx-dai:name>""") // TODO api bug? lang on title?
     )
-    validate(triedDdm) shouldBe Success(())
+    assume(schemaIsAvailable)
+    triedDdm.flatMap(validate) shouldBe Success(())
   }
 
   "descriptions" should "all appear" in {
@@ -105,7 +107,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport {
         </emd:description>
     ))
     DDM(emd, Seq.empty).map(trim) shouldBe Success(trim(
-      <ddm:DDM xsi:schemaLocation="http://easy.dans.knaw.nl/schemas/md/ddm/ https://easy.dans.knaw.nl/schemas/md/ddm/ddm.xsd">
+      <ddm:DDM xsi:schemaLocation={ schemaLocation }>
          <ddm:profile>
            <dct:description>abstract</dct:description>
            <dct:description>Suggestions for data usage: remark1</dct:description>
@@ -155,7 +157,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport {
         </emd:relation>
     ))
     DDM(emd, Seq.empty).map(trim) shouldBe Success(trim( // TODO implemented quick and dirty
-      <ddm:DDM xsi:schemaLocation="http://easy.dans.knaw.nl/schemas/md/ddm/ https://easy.dans.knaw.nl/schemas/md/ddm/ddm.xsd">
+      <ddm:DDM xsi:schemaLocation={ schemaLocation }>
         <ddm:profile>
           <ddm:accessRights/>
         </ddm:profile>
@@ -192,17 +194,16 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport {
         </emd:rights>
     ))
     // TODO namespace attributes in random order get in the way of trimmed comparison as above
-    DDM(emd, Seq.empty).map(toStripped) shouldBe Success(
-      s"""<ddm:DDM
-         |xsi:schemaLocation="http://easy.dans.knaw.nl/schemas/md/ddm/ https://easy.dans.knaw.nl/schemas/md/ddm/ddm.xsd">
-         |  <ddm:profile>
-         |    <ddm:accessRights>ACCESS_ELSEWHERE</ddm:accessRights>
-         |  </ddm:profile>
-         |  <ddm:dcmiMetadata>
-         |    <dct:license xsi:type="dct:URI">${ DDM.dansLicense }</dct:license>
-         |  </ddm:dcmiMetadata>
-         |</ddm:DDM>
-         |""".stripMargin)
+    DDM(emd, Seq.empty).map(normalized) shouldBe Success(normalized(
+      <ddm:DDM xsi:schemaLocation={ schemaLocation }>
+        <ddm:profile>
+          <ddm:accessRights>ACCESS_ELSEWHERE</ddm:accessRights>
+        </ddm:profile>
+        <ddm:dcmiMetadata>
+          <dct:license xsi:type="dct:URI">{ DDM.dansLicense }</dct:license>
+        </ddm:dcmiMetadata>
+      </ddm:DDM>
+    ))
   }
 
   it should "convert from OPEN_ACCESS" in { // as in streaming.xml
@@ -211,17 +212,16 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport {
           <dct:accessRights eas:schemeId="common.dct.accessrights">OPEN_ACCESS</dct:accessRights>
       </emd:rights>
     ))
-    DDM(emd, Seq.empty).map(toStripped) shouldBe Success(
-      s"""<ddm:DDM
-         |xsi:schemaLocation="http://easy.dans.knaw.nl/schemas/md/ddm/ https://easy.dans.knaw.nl/schemas/md/ddm/ddm.xsd">
-         |  <ddm:profile>
-         |    <ddm:accessRights>OPEN_ACCESS</ddm:accessRights>
-         |  </ddm:profile>
-         |  <ddm:dcmiMetadata>
-         |    <dct:license xsi:type="dct:URI">${ DDM.cc0 }</dct:license>
-         |  </ddm:dcmiMetadata>
-         |</ddm:DDM>
-         |""".stripMargin)
+    DDM(emd, Seq.empty).map(normalized) shouldBe Success(normalized(
+      <ddm:DDM xsi:schemaLocation={ schemaLocation }>
+        <ddm:profile>
+          <ddm:accessRights>OPEN_ACCESS</ddm:accessRights>
+        </ddm:profile>
+        <ddm:dcmiMetadata>
+          <dct:license xsi:type="dct:URI">{ DDM.cc0 }</dct:license>
+        </ddm:dcmiMetadata>
+      </ddm:DDM>
+    ))
   }
 
   it should "convert from REQUEST_PERMISSION" in { // as in TalkOfEurope.xml
@@ -231,36 +231,308 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport {
             <dct:license>accept</dct:license>
         </emd:rights>
     ))
-    DDM(emd, Seq.empty).map(toStripped) shouldBe Success(
-      s"""<ddm:DDM
-         |xsi:schemaLocation="http://easy.dans.knaw.nl/schemas/md/ddm/ https://easy.dans.knaw.nl/schemas/md/ddm/ddm.xsd">
-         |  <ddm:profile>
-         |    <ddm:accessRights>REQUEST_PERMISSION</ddm:accessRights>
-         |  </ddm:profile>
-         |  <ddm:dcmiMetadata>
-         |    <dct:license xsi:type="dct:URI">${ DDM.dansLicense }</dct:license>
-         |  </ddm:dcmiMetadata>
-         |</ddm:DDM>
-         |""".stripMargin)
+    DDM(emd, Seq.empty).map(normalized) shouldBe Success(normalized(
+      <ddm:DDM xsi:schemaLocation={ schemaLocation }>
+        <ddm:profile>
+          <ddm:accessRights>REQUEST_PERMISSION</ddm:accessRights>
+        </ddm:profile>
+        <ddm:dcmiMetadata>
+          <dct:license xsi:type="dct:URI">{ DDM.dansLicense }</dct:license>
+        </ddm:dcmiMetadata>
+      </ddm:DDM>
+    ))
   }
 
-  "spatial" should "render invalid DDM" in { // TODO until everything is implemented
+  "spatial" should "render a point" in {
+    val emd = parseEmdContent(Seq(
+      emdTitle, emdCreator, emdDescription, emdDates,
+        <emd:coverage>
+          <eas:spatial><eas:point eas:scheme="RD"><eas:x>700</eas:x><eas:y>456000</eas:y></eas:point></eas:spatial>
+          <eas:spatial><eas:point eas:scheme="degrees"><eas:x>52.08110</eas:x><eas:y>4.34521</eas:y></eas:point></eas:spatial>
+          <eas:spatial><eas:point><eas:x>1</eas:x><eas:y>2</eas:y></eas:point></eas:spatial>
+          <eas:spatial><eas:point><eas:x>1</eas:x></eas:point></eas:spatial>
+          <eas:spatial><eas:point><eas:y>2</eas:y></eas:point></eas:spatial>
+        </emd:coverage>,
+      emdRights,
+    ))
+    val triedDDM = DDM(emd, Seq("D35400"))
+    triedDDM.map(normalized) shouldBe Success(normalized(
+      <ddm:DDM xsi:schemaLocation={ schemaLocation }>
+        { ddmProfile("D35400") }
+        <ddm:dcmiMetadata>
+           <dcx-gml:spatial srsName="http://www.opengis.net/def/crs/EPSG/0/28992">
+             <Point xmlns="http://www.opengis.net/gml"><pos>700 456000</pos></Point>
+           </dcx-gml:spatial>
+           <dcx-gml:spatial srsName="http://www.opengis.net/def/crs/EPSG/0/4326">
+             <Point xmlns="http://www.opengis.net/gml"><pos>4.34521 52.08110</pos></Point>
+           </dcx-gml:spatial>
+           <dcx-gml:spatial><Point xmlns="http://www.opengis.net/gml"><pos>2 1</pos></Point></dcx-gml:spatial>
+           <dcx-gml:spatial><Point xmlns="http://www.opengis.net/gml"><pos>0 1</pos></Point></dcx-gml:spatial>
+           <dcx-gml:spatial><Point xmlns="http://www.opengis.net/gml"><pos>2 0</pos></Point></dcx-gml:spatial>
+           <dct:license xsi:type="dct:URI">{ DDM.cc0 }</dct:license>
+        </ddm:dcmiMetadata>
+      </ddm:DDM>
+      )
+    ) // note that a missing x or y defaults to zero
+    assume(schemaIsAvailable)
+    triedDDM.flatMap(validate) shouldBe Success(())
+  }
+
+  it should "report a point without coordinates as not implemented" in {
+    val emd = parseEmdContent(Seq(
+      emdTitle, emdCreator, emdDescription, emdDates,
+        <emd:coverage>
+          <eas:spatial><eas:point eas:scheme="RD"></eas:point></eas:spatial>
+        </emd:coverage>,
+      emdRights,
+    ))
+    DDM(emd, Seq("D35400")).map(normalized) shouldBe Success(normalized(
+      <ddm:DDM xsi:schemaLocation={ schemaLocation }>
+        { ddmProfile("D35400") }
+        <ddm:dcmiMetadata>
+          <not:implemented/>
+          <dct:license xsi:type="dct:URI">{ DDM.cc0 }</dct:license>
+        </ddm:dcmiMetadata>
+      </ddm:DDM>
+    )) // logging explains the not implemented
+  }
+
+  it should "render a polygon" in {
     val emd = parseEmdContent(Seq(
       emdTitle, emdCreator, emdDescription, emdDates,
         <emd:coverage>
           <eas:spatial>
-              <eas:place/>
-              <eas:point eas:scheme="RD">
-                  <eas:x>155000</eas:x>
-                  <eas:y>463000</eas:y>
-              </eas:point>
+            <eas:polygon eas:scheme="RD">
+              <eas:place>Some kind of description, without an actual polygon attached to it</eas:place>
+            </eas:polygon>
+          </eas:spatial>
+          <eas:spatial>
+            <eas:polygon eas:scheme="degrees">
+              <eas:place>A triangle between DANS, NWO and the railway station</eas:place>
+              <eas:polygon-exterior>
+                <eas:place>main triangle</eas:place>
+                <eas:polygon-point><eas:x>52.08110</eas:x><eas:y>4.34521</eas:y></eas:polygon-point>
+                <eas:polygon-point><eas:x>52.08071</eas:x><eas:y>4.34422</eas:y></eas:polygon-point>
+                <eas:polygon-point><eas:x>52.07913</eas:x><eas:y>4.34332</eas:y></eas:polygon-point>
+                <eas:polygon-point><eas:x>52.08110</eas:x><eas:y>4.34521</eas:y></eas:polygon-point>
+              </eas:polygon-exterior>
+              <eas:polygon-interior>
+                <eas:place>hole1</eas:place>
+                <eas:polygon-point><eas:x>52.080542</eas:x><eas:y>4.344215</eas:y></eas:polygon-point>
+                <eas:polygon-point><eas:x>52.080450</eas:x><eas:y>4.344323</eas:y></eas:polygon-point>
+                <eas:polygon-point><eas:x>52.080357</eas:x><eas:y>4.344110</eas:y></eas:polygon-point>
+                <eas:polygon-point><eas:x>52.080542</eas:x><eas:y>4.344215</eas:y></eas:polygon-point>
+              </eas:polygon-interior>
+              <eas:polygon-interior>
+                <eas:place>hole2</eas:place>
+                <eas:polygon-point><eas:x>52.080542</eas:x><eas:y>4.344215</eas:y></eas:polygon-point>
+                <eas:polygon-point><eas:x>52.080450</eas:x><eas:y>4.344323</eas:y></eas:polygon-point>
+                <eas:polygon-point><eas:x>52.080357</eas:x><eas:y>4.344110</eas:y></eas:polygon-point>
+                <eas:polygon-point><eas:x>52.080542</eas:x><eas:y>4.344215</eas:y></eas:polygon-point>
+              </eas:polygon-interior>
+            </eas:polygon>
+          </eas:spatial>
+          <eas:spatial>
+            <eas:polygon eas:scheme="RD">
+              <eas:place>A triangle between DANS, NWO and the railway station</eas:place>
+              <eas:polygon-interior>
+                <eas:place>hole in none</eas:place>
+                <eas:polygon-point><eas:x>83506</eas:x><eas:y>455210</eas:y></eas:polygon-point>
+                <eas:polygon-point><eas:x>83513</eas:x><eas:y>455200</eas:y></eas:polygon-point>
+                <eas:polygon-point><eas:x>83499</eas:x><eas:y>455189</eas:y></eas:polygon-point>
+                <eas:polygon-point><eas:x>83506</eas:x><eas:y>455210</eas:y></eas:polygon-point>
+              </eas:polygon-interior>
+            </eas:polygon>
+          </eas:spatial>
+          <eas:spatial>
+            <eas:polygon eas:scheme="RD">
+              <eas:place>A triangle between DANS, NWO and the railway station</eas:place>
+              <eas:polygon-interior>
+                <eas:place>pointless hole</eas:place>
+              </eas:polygon-interior>
+            </eas:polygon>
           </eas:spatial>
         </emd:coverage>,
       emdRights,
     ))
-    validate(DDM(emd, Seq("D13200")).map(toS)) should matchPattern {
-      case Failure(e) if e.getMessage.contains("not:implemented") =>
-    }
+    val triedDDM = DDM(emd, Seq("D35400"))
+    triedDDM.map(normalized(_).replace("<posList></posList>", "<posList/>")) shouldBe Success(normalized(
+      <ddm:DDM xsi:schemaLocation={ schemaLocation }>
+        { ddmProfile("D35400") }
+        <ddm:dcmiMetadata>
+           <dcx-gml:spatial>
+             <Polygon srsName="http://www.opengis.net/def/crs/EPSG/0/28992" xmlns="http://www.opengis.net/gml">
+               <name>Some kind of description, without an actual polygon attached to it</name>
+             </Polygon>
+           </dcx-gml:spatial>
+           <dcx-gml:spatial>
+             <Polygon srsName="http://www.opengis.net/def/crs/EPSG/0/4326" xmlns="http://www.opengis.net/gml">
+               <name>A triangle between DANS, NWO and the railway station</name>
+               <exterior><LinearRing><description>main triangle</description><posList>4.34521 52.08110 4.34422 52.08071 4.34332 52.07913 4.34521 52.08110</posList></LinearRing></exterior>
+               <interior><LinearRing><description>hole1</description><posList>4.344215 52.080542 4.344323 52.080450 4.344110 52.080357 4.344215 52.080542</posList></LinearRing></interior>
+               <interior><LinearRing><description>hole2</description><posList>4.344215 52.080542 4.344323 52.080450 4.344110 52.080357 4.344215 52.080542</posList></LinearRing></interior>
+             </Polygon>
+           </dcx-gml:spatial>
+           <dcx-gml:spatial>
+             <Polygon srsName="http://www.opengis.net/def/crs/EPSG/0/28992" xmlns="http://www.opengis.net/gml">
+               <name>A triangle between DANS, NWO and the railway station</name>
+               <interior><LinearRing><description>hole in none</description><posList>83506 455210 83513 455200 83499 455189 83506 455210</posList></LinearRing></interior>
+             </Polygon>
+           </dcx-gml:spatial>
+           <dcx-gml:spatial>
+             <Polygon srsName="http://www.opengis.net/def/crs/EPSG/0/28992" xmlns="http://www.opengis.net/gml">
+               <name>A triangle between DANS, NWO and the railway station</name>
+               <interior><LinearRing><description>pointless hole</description><posList></posList></LinearRing></interior>
+             </Polygon>
+           </dcx-gml:spatial>
+          <dct:license xsi:type="dct:URI">{ DDM.cc0 }</dct:license>
+        </ddm:dcmiMetadata>
+      </ddm:DDM>
+    )) // Note that even te validation is happy with a pointless polygon or an interior without exterior
+    assume(schemaIsAvailable)
+    triedDDM.flatMap(validate) shouldBe Success(())
+  }
+
+  it should "render a box" in {
+    val emd = parseEmdContent(Seq(
+      emdTitle, emdCreator, emdDescription, emdDates,
+        <emd:coverage>
+          <eas:spatial>
+            <eas:box eas:scheme="RD">
+              <eas:north>455271.2</eas:north>
+              <eas:east>83575.4</eas:east>
+              <eas:south>455271.0</eas:south>
+              <eas:west>83575.0</eas:west>
+            </eas:box>
+          </eas:spatial>
+          <eas:spatial>
+            <eas:box eas:scheme="degrees">
+              <eas:north>79.5</eas:north>
+              <eas:east>23.0</eas:east>
+              <eas:south>76.7</eas:south>
+              <eas:west>10.0</eas:west>
+            </eas:box>
+          </eas:spatial>
+          <eas:spatial>
+            <eas:box eas:scheme="RD">
+              <eas:west>83575.0</eas:west>
+            </eas:box>
+          </eas:spatial>
+          <eas:spatial>
+            <eas:box eas:scheme="degrees">
+                <eas:north>79.5</eas:north>
+            </eas:box>
+          </eas:spatial>
+        </emd:coverage>,
+      emdRights,
+    ))
+    val triedDDM = DDM(emd, Seq("D35400"))
+    triedDDM.map(normalized) shouldBe Success(normalized(
+      <ddm:DDM xsi:schemaLocation={ schemaLocation }>
+        { ddmProfile("D35400") }
+        <ddm:dcmiMetadata>
+           <dcx-gml:spatial>
+             <boundedBy xmlns="http://www.opengis.net/gml">
+               <Envelope srsName="http://www.opengis.net/def/crs/EPSG/0/28992">
+                 <lowerCorner>83575.0 455271.0</lowerCorner>
+                 <upperCorner>83575.4 455271.2</upperCorner>
+               </Envelope>
+             </boundedBy>
+           </dcx-gml:spatial>
+           <dcx-gml:spatial>
+             <boundedBy xmlns="http://www.opengis.net/gml">
+               <Envelope srsName="http://www.opengis.net/def/crs/EPSG/0/4326">
+                 <lowerCorner>76.7 10.0</lowerCorner>
+                 <upperCorner>79.5 23.0</upperCorner>
+               </Envelope>
+             </boundedBy>
+           </dcx-gml:spatial>
+           <dcx-gml:spatial>
+             <boundedBy xmlns="http://www.opengis.net/gml">
+               <Envelope srsName="http://www.opengis.net/def/crs/EPSG/0/28992">
+                 <lowerCorner>83575.0 0</lowerCorner>
+                 <upperCorner>0 0</upperCorner>
+               </Envelope>
+             </boundedBy>
+           </dcx-gml:spatial>
+           <dcx-gml:spatial>
+             <boundedBy xmlns="http://www.opengis.net/gml">
+               <Envelope srsName="http://www.opengis.net/def/crs/EPSG/0/4326">
+                 <lowerCorner>0 0</lowerCorner>
+                 <upperCorner>79.5 0</upperCorner>
+               </Envelope>
+             </boundedBy>
+           </dcx-gml:spatial>
+           <dct:license xsi:type="dct:URI">{ DDM.cc0 }</dct:license>
+        </ddm:dcmiMetadata>
+      </ddm:DDM>
+    ))
+    assume(schemaIsAvailable)
+    triedDDM.flatMap(validate) shouldBe Success(())
+  }
+
+  it should "report a box without any coordinate as not implemented" in {
+    val emd = parseEmdContent(Seq(
+      emdTitle, emdCreator, emdDescription, emdDates,
+        <emd:coverage>
+          <eas:spatial>
+            <eas:box eas:scheme="RD">
+            </eas:box>
+          </eas:spatial>
+          <eas:spatial>
+            <eas:box eas:scheme="degrees">
+            </eas:box>
+          </eas:spatial>
+        </emd:coverage>,
+      emdRights,
+    ))
+    val triedDDM = DDM(emd, Seq("D35400"))
+    triedDDM.map(normalized) shouldBe Success(normalized(
+      <ddm:DDM xsi:schemaLocation={ schemaLocation }>
+        { ddmProfile("D35400") }
+        <ddm:dcmiMetadata>
+          <not:implemented/>
+          <not:implemented/>
+          <dct:license xsi:type="dct:URI">{ DDM.cc0 }</dct:license>
+        </ddm:dcmiMetadata>
+      </ddm:DDM>
+    )) // logging explains the not implemented
+  }
+
+  it should "report a mix of spatial element types" in {
+    val emd = parseEmdContent(Seq(
+      emdTitle, emdCreator, emdDescription, emdDates,
+        <emd:coverage>
+          <eas:spatial>
+            <eas:place>A general description</eas:place>
+          </eas:spatial>
+          <eas:spatial>
+            <eas:point><eas:x>1</eas:x></eas:point>
+            <eas:box eas:scheme="degrees"><eas:north>79.5</eas:north><eas:east>23.0</eas:east><eas:south>76.7</eas:south><eas:west>10.0</eas:west></eas:box>
+          </eas:spatial>
+          <eas:spatial>
+            <eas:box eas:scheme="degrees"><eas:north>79.5</eas:north><eas:east>23.0</eas:east><eas:south>76.7</eas:south><eas:west>10.0</eas:west></eas:box>
+            <eas:polygon eas:scheme="RD"><eas:place>A polygon description</eas:place></eas:polygon>
+          </eas:spatial>
+          <eas:spatial>
+            <eas:point><eas:x>1</eas:x></eas:point>
+            <eas:polygon eas:scheme="RD"><eas:place>A polygon description</eas:place></eas:polygon>
+          </eas:spatial>
+        </emd:coverage>,
+      emdRights,
+    ))
+    DDM(emd, Seq("D35400")).map(normalized) shouldBe Success(normalized(
+      <ddm:DDM xsi:schemaLocation={ schemaLocation }>
+        { ddmProfile("D35400") }
+        <ddm:dcmiMetadata>
+          <not:implemented/>
+          <not:implemented/>
+          <not:implemented/>
+          <not:implemented/>
+          <dct:license xsi:type="dct:URI">{ DDM.cc0 }</dct:license>
+        </ddm:dcmiMetadata>
+      </ddm:DDM>
+    ))
   }
 
   "subject" should "succeed" in {
@@ -272,25 +544,16 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport {
       </emd:subject>,
       emdDescription, emdDates, emdRights,
     ))
-    DDM(emd, Seq("D35400")).map(toS).map(strip) shouldBe Success(
-      s"""<ddm:DDM
-         |xsi:schemaLocation="http://easy.dans.knaw.nl/schemas/md/ddm/ https://easy.dans.knaw.nl/schemas/md/ddm/ddm.xsd">
-         |  <ddm:profile>
-         |    <dc:title>XXX</dc:title>
-         |    <dct:description>YYY</dct:description>
-         |$ddmCreator
-         |    <ddm:created>2017-09-30</ddm:created>
-         |    <ddm:available>2017-09-30</ddm:available>
-         |    <ddm:audience>D35400</ddm:audience>
-         |    <ddm:accessRights>OPEN_ACCESS</ddm:accessRights>
-         |  </ddm:profile>
-         |  <ddm:dcmiMetadata>
-         |    <dc:subject xsi:type="abr:ABRcomplex">DEPO</dc:subject>
-         |    <dc:subject>hello world</dc:subject>
-         |    <dct:license xsi:type="dct:URI">${ DDM.cc0 }</dct:license>
-         |  </ddm:dcmiMetadata>
-         |</ddm:DDM>
-         |""".stripMargin)
+    DDM(emd, Seq("D13200")).map(normalized) shouldBe Success(normalized(
+      <ddm:DDM xsi:schemaLocation={ schemaLocation }>
+        { ddmProfile("D13200") }
+        <ddm:dcmiMetadata>
+          <dc:subject xsi:type="abr:ABRcomplex">DEPO</dc:subject>
+          <dc:subject>hello world</dc:subject>
+          <dct:license xsi:type="dct:URI">{ DDM.cc0 }</dct:license>
+        </ddm:dcmiMetadata>
+      </ddm:DDM>
+    ))
   }
 
   it should "generate not-implemented" in {
@@ -301,20 +564,19 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport {
             <dc:subject xml:lang="nld-NLD" eas:scheme="BSS0">subject zero</dc:subject>
         </emd:subject>
     ))
-    DDM(emd, Seq.empty).map(toS).map(strip) shouldBe Success(
-      s"""<ddm:DDM
-         |xsi:schemaLocation="http://easy.dans.knaw.nl/schemas/md/ddm/ https://easy.dans.knaw.nl/schemas/md/ddm/ddm.xsd">
-         |  <ddm:profile>
-         |    <ddm:accessRights/>
-         |  </ddm:profile>
-         |  <ddm:dcmiMetadata>
-         |    <not:implemented/>
-         |    <not:implemented/>
-         |    <not:implemented/>
-         |    <dct:license xsi:type="dct:URI">${ DDM.dansLicense }</dct:license>
-         |  </ddm:dcmiMetadata>
-         |</ddm:DDM>
-         |""".stripMargin)
+    DDM(emd, Seq.empty).map(normalized) shouldBe Success(normalized(
+      <ddm:DDM xsi:schemaLocation={ schemaLocation }>
+        <ddm:profile>
+          <ddm:accessRights/>
+        </ddm:profile>
+        <ddm:dcmiMetadata>
+          <not:implemented/>
+          <not:implemented/>
+          <not:implemented/>
+          <dct:license xsi:type="dct:URI">{ DDM.dansLicense }</dct:license>
+        </ddm:dcmiMetadata>
+      </ddm:DDM>
+    ))
   }
 
   "author" should "succeed" in {
@@ -344,47 +606,46 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport {
           </eas:creator>
         </emd:creator>
     ))
-    DDM(emd, Seq.empty).map(toS).map(strip) shouldBe Success(
-      s"""<ddm:DDM
-         |xsi:schemaLocation="http://easy.dans.knaw.nl/schemas/md/ddm/ https://easy.dans.knaw.nl/schemas/md/ddm/ddm.xsd">
-         |  <ddm:profile>
-         |    <dcx-dai:creatorDetails>
-         |      <dcx-dai:author>
-         |        <dcx-dai:titles>Drs</dcx-dai:titles>
-         |        <dcx-dai:initials>P</dcx-dai:initials>
-         |        <dcx-dai:insertions>van der</dcx-dai:insertions>
-         |        <dcx-dai:surname>Poel</dcx-dai:surname>
-         |        <dcx-dai:DAI>info:eu-repo/dai/nl/068519397</dcx-dai:DAI>
-         |      </dcx-dai:author>
-         |    </dcx-dai:creatorDetails>
-         |    <dcx-dai:creatorDetails>
-         |      <dcx-dai:author>
-         |        <dcx-dai:initials>X.I.</dcx-dai:initials>
-         |        <dcx-dai:surname>lastname</dcx-dai:surname>
-         |        <dcx-dai:DAI>info:eu-repo/dai/nl/9876543216</dcx-dai:DAI>
-         |      </dcx-dai:author>
-         |    </dcx-dai:creatorDetails>
-         |    <dcx-dai:creatorDetails>
-         |      <dcx-dai:author>
-         |        <dcx-dai:initials>X.I.</dcx-dai:initials>
-         |        <dcx-dai:surname>lastname</dcx-dai:surname>
-         |        <dcx-dai:ISNI>http://isni.org/isni/000000012281955X</dcx-dai:ISNI>
-         |      </dcx-dai:author>
-         |    </dcx-dai:creatorDetails>
-         |    <dcx-dai:creatorDetails>
-         |      <dcx-dai:author>
-         |        <dcx-dai:initials>X.I.</dcx-dai:initials>
-         |        <dcx-dai:surname>lastname</dcx-dai:surname>
-         |        <dcx-dai:ORCID>https://orcid.org/0000-0001-2281-955X</dcx-dai:ORCID>
-         |      </dcx-dai:author>
-         |    </dcx-dai:creatorDetails>
-         |    <ddm:accessRights/>
-         |  </ddm:profile>
-         |  <ddm:dcmiMetadata>
-         |    <dct:license xsi:type="dct:URI">${ DDM.dansLicense }</dct:license>
-         |  </ddm:dcmiMetadata>
-         |</ddm:DDM>
-         |""".stripMargin)
+    DDM(emd, Seq.empty).map(normalized) shouldBe Success(normalized(
+      <ddm:DDM xsi:schemaLocation={ schemaLocation }>
+        <ddm:profile>
+          <dcx-dai:creatorDetails>
+            <dcx-dai:author>
+              <dcx-dai:titles>Drs</dcx-dai:titles>
+              <dcx-dai:initials>P</dcx-dai:initials>
+              <dcx-dai:insertions>van der</dcx-dai:insertions>
+              <dcx-dai:surname>Poel</dcx-dai:surname>
+              <dcx-dai:DAI>info:eu-repo/dai/nl/068519397</dcx-dai:DAI>
+            </dcx-dai:author>
+          </dcx-dai:creatorDetails>
+          <dcx-dai:creatorDetails>
+            <dcx-dai:author>
+              <dcx-dai:initials>X.I.</dcx-dai:initials>
+              <dcx-dai:surname>lastname</dcx-dai:surname>
+              <dcx-dai:DAI>info:eu-repo/dai/nl/9876543216</dcx-dai:DAI>
+            </dcx-dai:author>
+          </dcx-dai:creatorDetails>
+          <dcx-dai:creatorDetails>
+            <dcx-dai:author>
+              <dcx-dai:initials>X.I.</dcx-dai:initials>
+              <dcx-dai:surname>lastname</dcx-dai:surname>
+              <dcx-dai:ISNI>http://isni.org/isni/000000012281955X</dcx-dai:ISNI>
+            </dcx-dai:author>
+          </dcx-dai:creatorDetails>
+          <dcx-dai:creatorDetails>
+            <dcx-dai:author>
+              <dcx-dai:initials>X.I.</dcx-dai:initials>
+              <dcx-dai:surname>lastname</dcx-dai:surname>
+              <dcx-dai:ORCID>https://orcid.org/0000-0001-2281-955X</dcx-dai:ORCID>
+            </dcx-dai:author>
+          </dcx-dai:creatorDetails>
+          <ddm:accessRights/>
+        </ddm:profile>
+        <ddm:dcmiMetadata>
+          <dct:license xsi:type="dct:URI">{ DDM.dansLicense }</dct:license>
+        </ddm:dcmiMetadata>
+      </ddm:DDM>
+    ))
   }
 
   "dates" should "use created for available" in {
@@ -393,19 +654,18 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport {
               <dct:created>03-2013</dct:created>
           </emd:date>
     ))
-    DDM(emd, Seq.empty).map(toS).map(strip) shouldBe Success(
-      s"""<ddm:DDM
-         |xsi:schemaLocation="http://easy.dans.knaw.nl/schemas/md/ddm/ https://easy.dans.knaw.nl/schemas/md/ddm/ddm.xsd">
-         |  <ddm:profile>
-         |    <ddm:created>03-2013</ddm:created>
-         |    <ddm:available>03-2013</ddm:available>
-         |    <ddm:accessRights/>
-         |  </ddm:profile>
-         |  <ddm:dcmiMetadata>
-         |    <dct:license xsi:type="dct:URI">${ DDM.dansLicense }</dct:license>
-         |  </ddm:dcmiMetadata>
-         |</ddm:DDM>
-         |""".stripMargin)
+    DDM(emd, Seq.empty).map(normalized) shouldBe Success(normalized(
+      <ddm:DDM xsi:schemaLocation={ schemaLocation }>
+        <ddm:profile>
+          <ddm:created>03-2013</ddm:created>
+          <ddm:available>03-2013</ddm:available>
+          <ddm:accessRights/>
+        </ddm:profile>
+        <ddm:dcmiMetadata>
+          <dct:license xsi:type="dct:URI">{ DDM.dansLicense }</dct:license>
+        </ddm:dcmiMetadata>
+      </ddm:DDM>
+    ))
   }
 
   it should "render only the first available" in {
@@ -436,88 +696,52 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport {
               <eas:dateSubmitted eas:scheme="W3CDTF" eas:format="MONTH">1908-04-01T00:00:00.000+00:19:32</eas:dateSubmitted>
           </emd:date>
     ))
-    DDM(emd, Seq.empty).map(toS).map(strip) shouldBe Success(
-      s"""<ddm:DDM
-         |xsi:schemaLocation="http://easy.dans.knaw.nl/schemas/md/ddm/ https://easy.dans.knaw.nl/schemas/md/ddm/ddm.xsd">
-         |  <ddm:profile>
-         |    <ddm:created>03-2013</ddm:created>
-         |    <ddm:created>2017-09-30</ddm:created>
-         |    <ddm:created>1901-04</ddm:created>
-         |    <ddm:available>04-2013</ddm:available>
-         |    <ddm:available>1900</ddm:available>
-         |    <ddm:available>1902-04</ddm:available>
-         |    <ddm:accessRights/>
-         |  </ddm:profile>
-         |  <ddm:dcmiMetadata>
-         |    <dct:date>gisteren</dct:date>
-         |    <dct:date>11-2013</dct:date>
-         |    <dct:date>12-2013</dct:date>
-         |    <dct:date xsi:type="dct:W3CDTF">1909-04</dct:date>
-         |    <dct:date xsi:type="dct:W3CDTF">1910-04</dct:date>
-         |    <dct:dateCopyrighted>09-2013</dct:dateCopyrighted>
-         |    <dct:dateCopyrighted xsi:type="dct:W3CDTF">1907-04</dct:dateCopyrighted>
-         |    <dct:dateSubmitted>10-2013</dct:dateSubmitted>
-         |    <dct:dateSubmitted xsi:type="dct:W3CDTF">1908-04</dct:dateSubmitted>
-         |    <dct:modified>08-2013</dct:modified>
-         |    <dct:modified xsi:type="dct:W3CDTF">1906-04</dct:modified>
-         |    <dct:issued>07-2013</dct:issued>
-         |    <dct:issued xsi:type="dct:W3CDTF">1905-04</dct:issued>
-         |    <dct:dateAccepted>05-2013</dct:dateAccepted>
-         |    <dct:dateAccepted xsi:type="dct:W3CDTF">1903-04</dct:dateAccepted>
-         |    <dct:valid>06-2013</dct:valid>
-         |    <dct:valid xsi:type="dct:W3CDTF">1904-04</dct:valid>
-         |    <dct:license xsi:type="dct:URI">${ DDM.dansLicense }</dct:license>
-         |  </ddm:dcmiMetadata>
-         |</ddm:DDM>
-         |""".stripMargin)
+    DDM(emd, Seq.empty).map(normalized) shouldBe Success(normalized(
+      <ddm:DDM xsi:schemaLocation={ schemaLocation }>
+        <ddm:profile>
+          <ddm:created>03-2013</ddm:created>
+          <ddm:created>2017-09-30</ddm:created>
+          <ddm:created>1901-04</ddm:created>
+          <ddm:available>04-2013</ddm:available>
+          <ddm:available>1900</ddm:available>
+          <ddm:available>1902-04</ddm:available>
+          <ddm:accessRights/>
+        </ddm:profile>
+        <ddm:dcmiMetadata>
+          <dct:date>gisteren</dct:date>
+          <dct:date>11-2013</dct:date>
+          <dct:date>12-2013</dct:date>
+          <dct:date xsi:type="dct:W3CDTF">1909-04</dct:date>
+          <dct:date xsi:type="dct:W3CDTF">1910-04</dct:date>
+          <dct:dateCopyrighted>09-2013</dct:dateCopyrighted>
+          <dct:dateCopyrighted xsi:type="dct:W3CDTF">1907-04</dct:dateCopyrighted>
+          <dct:dateSubmitted>10-2013</dct:dateSubmitted>
+          <dct:dateSubmitted xsi:type="dct:W3CDTF">1908-04</dct:dateSubmitted>
+          <dct:modified>08-2013</dct:modified>
+          <dct:modified xsi:type="dct:W3CDTF">1906-04</dct:modified>
+          <dct:issued>07-2013</dct:issued>
+          <dct:issued xsi:type="dct:W3CDTF">1905-04</dct:issued>
+          <dct:dateAccepted>05-2013</dct:dateAccepted>
+          <dct:dateAccepted xsi:type="dct:W3CDTF">1903-04</dct:dateAccepted>
+          <dct:valid>06-2013</dct:valid>
+          <dct:valid xsi:type="dct:W3CDTF">1904-04</dct:valid>
+          <dct:license xsi:type="dct:URI">{ DDM.dansLicense }</dct:license>
+        </ddm:dcmiMetadata>
+      </ddm:DDM>
+    ))
   }
 
-  private def toS(elem: Node) = printer.format(Utility.trim(elem))
+  private def normalized(elem: Node) = printer
+    .format(Utility.trim(elem)) // this trim normalizes <a/> and <a></a>
+    .replaceAll(nameSpaceRegExp, "") // the random order would cause differences in actual and expected
+    .replaceAll(" +\n?", " ")
+    .replaceAll("\n +<", "\n<")
+    .trim
 
-  private def toStripped(elem: Elem) = strip(toS(elem))
-
-  private def strip(str: String) = str
-    .replaceAll(nameSpaceRegExp, "")
-    .replaceAll(" \n", "\n")
-
-  private def validate(triedString: Try[String]): Try[Unit] = {
-    assume(schemaIsAvailable)
-    triedString.flatMap(validate)
-  }
-
-  private def validate(serialized: String): Try[Unit] = {
-    triedSchema.flatMap { schema =>
-      val source = new StreamSource(serialized.inputStream)
-      Try(schema.newValidator().validate(source))
-    }
-  }
-
-  private def schemaIsAvailable = {
-    triedSchema match {
-      case Failure(e: SAXParseException) if e.getCause.isInstanceOf[UnknownHostException] => false
-      case Failure(e: SAXParseException) if e.getMessage.contains("Cannot resolve") =>
-        println("Probably an offline third party schema: " + e.getMessage)
-        false
-      case _ => true
-    }
-  }
-
-  /** @return a stripped XML compatible with expectedDDM */
-  private def normalize(xml: String): String = xml.replaceAll(nameSpaceRegExp, "").replaceAll(" +\n?", " ")
-
-  private def expectedDDM(file: String) = {
-    (File("src/test/resources/expected-ddm/") / file)
-      .contentAsString.replaceAll(" +", " ")
-  }
-
-  private def getEmd(file: DatasetId) = {
+  private def getEmd(file: String) = {
     for {
       emdNode <- FoXml.getEmd(XML.loadFile((sampleFoXML / file).toJava))
-      emd <- toEmdObject(emdNode)
+      emd <- Try(emdUnMarshaller.unmarshal(emdNode.serialize))
     } yield emd
-  }
-
-  private def toEmdObject(emdNode: Node) = {
-    Try(emdUnMarshaller.unmarshal(emdNode.serialize))
   }
 }

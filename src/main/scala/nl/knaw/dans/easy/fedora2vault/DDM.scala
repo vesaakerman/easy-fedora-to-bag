@@ -88,20 +88,13 @@ object DDM extends DebugEnhancedLogging {
        { emd.getEmdCoverage.getTermsSpatial.asScala.filterNot(hasSimpleScheme).map(bs => <dct:spatial xml:lang={ lang(bs) } xsi:type={ xsiType(bs) }>{ bs.getValue }</dct:spatial>) }
        { emd.getEmdCoverage.getTermsTemporal.asScala.filter(hasSimpleScheme).map(bs => <dct:temporal xml:lang={ lang(bs) } xsi:type={ abrType(bs) }>{ bs.getValue }</dct:temporal>) }
        { emd.getEmdCoverage.getTermsTemporal.asScala.filterNot(hasSimpleScheme).map(bs => <dct:temporal xml:lang={ lang(bs) } xsi:type={ xsiType(bs) }>{ bs.getValue }</dct:temporal>) }
-       { emd.getEmdCoverage.getEasSpatial.asScala.filterNot(_.getPlace == null).map(notImplemented("places")) }
        { dateMap.filter(isOtherDate).map { case (key, values) => values.map(_.withLabel(dateLabel(key))) } }
-       { emd.getEmdCoverage.getEasSpatial.asScala.filterNot(_.getBox == null).map(notImplemented("boxes")) }
-       { emd.getEmdCoverage.getEasSpatial.asScala.filterNot(_.getPoint == null).map(notImplemented("points")) }
-       { emd.getEmdCoverage.getEasSpatial.asScala.filterNot(_.getPolygons == null).map(notImplemented("polygons")) }
+       { emd.getEmdCoverage.getEasSpatial.asScala.map(spatial => toXml(spatial))}
        <dct:license xsi:type="dct:URI">{ toLicenseUrl(emd.getEmdRights) }</dct:license>
        { emd.getEmdLanguage.getDcLanguage.asScala.map(bs => <dct:language xsi:type={langType(bs)}>{ langValue(bs) }</dct:language>) }
      </ddm:dcmiMetadata>
    </ddm:DDM>
  }
-
-  private def isRightsHolder(author: Author) = {
-    Option(author.getRole).exists(_.getRole == "RightsHolder")
-  }
 
   private def langType(bs: BasicString): String = bs.getSchemeId match {
     case "fra" | "fra/fre" | "deu" | "deu/ger" | "nld" | "nld/dut" | "dut/nld" | "eng" => "dct:ISO639-3"
@@ -183,11 +176,87 @@ object DDM extends DebugEnhancedLogging {
     s"$uri/${ id.getEntityId }"
   }
 
+  private def toXml(spatial: Spatial): Elem = {
+    (Option(spatial.getPlace),
+      Option(spatial.getPoint),
+      Option(spatial.getBox),
+      Option(spatial.getPolygons),
+    ) match {
+      case (None, None, None, Some(polygons)) if !polygons.isEmpty =>
+        <dcx-gml:spatial>
+          { toXml(polygons.asScala) }
+        </dcx-gml:spatial>
+      case (None, Some(_), None, None) => toXmlPoint(spatial.getPoint)
+      case (None, None, Some(_), None) => toXml(spatial.getBox)
+      case _ => notImplemented("expected either point, box or polygon")(spatial)
+    }
+  }
+
+  private def toXmlPoint(emdPoint: Spatial.Point) = {
+    val point = SpatialPoint(
+      optional(emdPoint.getScheme),
+      optional(emdPoint.getX),
+      optional(emdPoint.getY),
+    )
+    point.dcxGml.getOrElse(notImplemented("invalid point")(point))
+  }
+
+  private def toXml(spatial: Spatial.Box): Elem = {
+    val box = SpatialBox(
+      optional(spatial.getScheme),
+      optional(spatial.getNorth),
+      optional(spatial.getEast),
+      optional(spatial.getSouth),
+      optional(spatial.getWest),
+    )
+    box.dcxGml.getOrElse(notImplemented("invalid box")(box))
+  }
+
+  private def toXml(polygons: Seq[Polygon]): Seq[Node] = polygons.map { polygon =>
+    val maybeScheme: Option[String] = optional(polygon.getScheme)
+    val srsName = new SchemedSpatial {
+      override val scheme: Option[String] = maybeScheme
+      override val value: Option[String] = None
+    }.srsName
+    val place = optional(polygon.getPlace)
+      .map(place => <name>{ place }</name>)
+      .getOrElse(Text(""))
+    val exterior = Option(polygon.getExterior)
+      .map(part => <exterior>{ toXml(part, maybeScheme) }</exterior>)
+      .getOrElse(Text(""))
+    val interiors = Option(polygon.getInterior).toSeq.flatMap(_.asScala)
+      .flatMap(part => <interior>{ toXml(part, maybeScheme) }</interior>)
+    <Polygon xmlns='http://www.opengis.net/gml' srsName={ srsName }>
+        { place }
+        { exterior }
+        { interiors }
+    </Polygon>
+  }
+
+  private def toXml(part: PolygonPart, maybeScheme: Option[String]): Node = {
+    val place = optional(part.getPlace)
+      .map(s => <description>{ s }</description>)
+      .getOrElse(Text(""))
+    val points = part.getPoints.asScala.map { polygonPoint =>
+      val x = optional(polygonPoint.getX)
+      val y = optional(polygonPoint.getY)
+      SpatialPoint(maybeScheme, x, y).pos
+    }
+    <LinearRing>
+        { place }
+        { <posList>{ points.mkString(" ") }</posList> }
+    </LinearRing>
+  }
+
   private def toXml(value: IsoDate): Elem = <label xsi:type={ orNull(value.getScheme) }>{ value }</label>
 
   private def toXml(value: BasicDate): Elem = <label xsi:type={ orNull(value.getScheme) }>{ value }</label>
 
   def orNull(dateScheme: DateScheme): String = Option(dateScheme).map("dct:" + _.toString).orNull
+
+  private def optional(s: String) = Option(s).filterNot(_.trim.isEmpty)
+
+  def orNull(s: String): String = optional(s).orNull
 
   private def isOtherDate(kv: (String, Iterable[Elem])): Boolean = !Seq("created", "available").contains(kv._1)
 
