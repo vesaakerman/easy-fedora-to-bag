@@ -13,13 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package nl.knaw.dans.easy.fedora2vault
+package nl.knaw.dans.easy.fedora2vault.check
 
-object TransformationType extends Enumeration {
-  type TransformationType = Value
+import nl.knaw.dans.easy.fedora2vault.BagIndex
 
-  // @formatter:off
-  val SIMPLE: TransformationType = Value("simple")
-  val THEMA: TransformationType = Value("thematische-collectie")
-  // @formatter:on
+case class SimpleChecker(override val bagIndex: BagIndex) extends TransformationChecker {
+  override def forbiddenTitle(title: String): Boolean = {
+    title.toLowerCase.contains("thematische collectie")
+  }
 }
