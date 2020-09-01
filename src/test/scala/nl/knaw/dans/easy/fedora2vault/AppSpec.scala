@@ -123,7 +123,7 @@ class AppSpec extends TestSupportFixture with BagIndexSupport with MockFactory w
     (metadata / "depositor-info/depositor-agreement.pdf").contentAsString shouldBe "blablabla"
     (metadata / "license.pdf").contentAsString shouldBe "lalala"
     metadata.list.toSeq.map(_.name).sortBy(identity) shouldBe
-      Seq("amd.xml", "dataset.xml", "depositor-info", "emd.xml", "files.xml", "license.pdf")
+      Seq("amd.xml", "dataset.xml", "depositor-info", "emd.xml", "files.xml", "license.pdf", "original")
     (metadata / "depositor-info").list.toSeq.map(_.name).sortBy(identity) shouldBe
       Seq("agreements.xml", "depositor-agreement.pdf", "message-from-depositor.txt")
   }
@@ -147,7 +147,7 @@ class AppSpec extends TestSupportFixture with BagIndexSupport with MockFactory w
     (metadata / "depositor-info/depositor-agreement.pdf").contentAsString shouldBe "blablabla"
     (metadata / "license.pdf").contentAsString shouldBe "lalala"
     metadata.list.toSeq.map(_.name).sortBy(identity) shouldBe
-      Seq("amd.xml", "dataset.xml", "depositor-info", "emd.xml", "files.xml", "license.pdf")
+      Seq("amd.xml", "dataset.xml", "depositor-info", "emd.xml", "files.xml", "license.pdf", "original")
     (metadata / "depositor-info").list.toSeq.map(_.name).sortBy(identity) shouldBe
       Seq("agreements.xml", "depositor-agreement.pdf", "message-from-depositor.txt")
   }
