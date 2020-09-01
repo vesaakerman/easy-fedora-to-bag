@@ -18,16 +18,15 @@ package nl.knaw.dans.easy.fedora2vault
 import java.net.URI
 
 import com.typesafe.scalalogging.Logger
-import nl.knaw.dans.easy.fedora2vault.check.{ SimpleChecker, TransformationChecker }
-import nl.knaw.dans.easy.fedora2vault.fixture.{ EmdSupport, TestSupportFixture }
+import nl.knaw.dans.easy.fedora2vault.check.{ SimpleChecker, ThemaChecker }
+import nl.knaw.dans.easy.fedora2vault.fixture.{ BagIndexSupport, EmdSupport, TestSupportFixture }
 import org.scalamock.scalatest.MockFactory
 import org.slf4j.{ Logger => UnderlyingLogger }
-import scalaj.http.HttpResponse
 
 import scala.util.Success
 import scala.xml.Elem
 
-class TransformationCheckerSpec extends TestSupportFixture with MockFactory with EmdSupport {
+class TransformationCheckerSpec extends TestSupportFixture with BagIndexSupport with MockFactory with EmdSupport {
 
   private class MockedBagIndex extends BagIndex(new URI("http://localhost:20120/"))
 
@@ -41,26 +40,39 @@ class TransformationCheckerSpec extends TestSupportFixture with MockFactory with
                          >10.17026/test-Iiib-z9p-4ywa</dc:identifier>
                        </emd:identifier>
 
-  "simpleViolations" should "succeed" in {
+  "ThemaChecker.simpleViolations" should "accept thematische collectie" in {
+    val emdTitle = <emd:title><dc:title xml:lang="nld">some thematische collectie</dc:title></emd:title>
+    val emd = parseEmdContent(Seq(emdTitle, emdDoi, emdRights))
+
+    themaChecker(loggerExpectsWarnings = Seq.empty)
+      .violations(emd, emd2ddm(emd), amd("PUBLISHED"), Seq()) shouldBe
+      Success(None)
+  }
+
+  it should "report other titles" in {
+    val emdTitle = <emd:title><dc:title xml:lang="nld">some collection</dc:title></emd:title>
+    val emd = parseEmdContent(Seq(emdTitle, emdDoi, emdRights))
+
+    themaChecker(loggerExpectsWarnings = Seq(
+      "violated 3: invalid title some collection",
+    )).violations(emd, emd2ddm(emd), amd("PUBLISHED"), Seq()) shouldBe
+      Success(Some("Violates 3: invalid title"))
+  }
+
+  "SimpleChecker.simpleViolations" should "succeed" in {
     val emdTitle = <emd:title><dc:title xml:lang="nld">no theme</dc:title></emd:title>
     val emd = parseEmdContent(Seq(emdTitle, emdDoi, emdRights))
 
-    simpleCheckerExpecting(
-      expectedBagIndexResponse = new HttpResponse[String](body = "", code = 404, headers = Map.empty),
-      loggerWarnCalledWith = Seq()
-    ).violations(emd, emd2ddm(emd), amd("PUBLISHED"), Seq.empty) shouldBe
+    simpleChecker(loggerExpectsWarnings = Seq(), mockBagIndexRespondsWith(body = "", code = 404)).violations(emd, emd2ddm(emd), amd("PUBLISHED"), Seq.empty) shouldBe
       Success(None)
   }
 
   it should "report missing DOI" in {
     val emd = parseEmdContent(emdRights)
-    simpleCheckerExpecting(
-      expectedBagIndexResponse = null, // no call expected
-      loggerWarnCalledWith = Seq(
-        "violated 1: DANS DOI not found",
-        "violated 5: invalid state SUBMITTED",
-      )
-    ).violations(emd, emd2ddm(emd), amd("SUBMITTED"), Seq.empty) shouldBe
+    simpleChecker(loggerExpectsWarnings = Seq(
+      "violated 1: DANS DOI not found",
+      "violated 5: invalid state SUBMITTED",
+    ), bagIndex = null).violations(emd, emd2ddm(emd), amd("SUBMITTED"), Seq.empty) shouldBe
       Success(Some("Violates 1: DANS DOI; 5: invalid state"))
   }
 
@@ -68,13 +80,10 @@ class TransformationCheckerSpec extends TestSupportFixture with MockFactory with
     val emdTitle = <emd:title><dc:title xml:lang="nld">thematische collectie</dc:title></emd:title>
     val emd = parseEmdContent(Seq(emdTitle, emdDoi))
 
-    simpleCheckerExpecting(
-      expectedBagIndexResponse = new HttpResponse[String](body = "", code = 404, headers = Map.empty),
-      loggerWarnCalledWith = Seq(
-        "violated 3: invalid title thematische collectie",
-        "violated 4: invalid rights not found",
-      )
-    ).violations(emd, emd2ddm(emd), amd("PUBLISHED"), Seq()) shouldBe
+    simpleChecker(loggerExpectsWarnings = Seq(
+      "violated 3: invalid title thematische collectie",
+      "violated 4: invalid rights not found",
+    )).violations(emd, emd2ddm(emd), amd("PUBLISHED"), Seq()) shouldBe
       Success(Some("Violates 3: invalid title; 4: invalid rights"))
   }
 
@@ -82,27 +91,21 @@ class TransformationCheckerSpec extends TestSupportFixture with MockFactory with
     val emdTitle = <emd:title><dc:title xml:lang="nld">thematische collectie</dc:title></emd:title>
     val emd = parseEmdContent(Seq(emdTitle, emdDoi))
 
-    simpleCheckerExpecting(expectedBagIndexResponse = new HttpResponse[String](
-      body = "", code = 404, headers = Map.empty),
-      loggerWarnCalledWith = Seq(
-        "violated 2: has jump off easy-jumpoff:123",
-        "violated 3: invalid title thematische collectie",
-        "violated 4: invalid rights not found",
-      )
-    ).violations(emd, emd2ddm(emd), amd("PUBLISHED"), Seq("easy-jumpoff:123")) shouldBe
+    simpleChecker(loggerExpectsWarnings = Seq(
+      "violated 2: has jump off easy-jumpoff:123",
+      "violated 3: invalid title thematische collectie",
+      "violated 4: invalid rights not found",
+    )).violations(emd, emd2ddm(emd), amd("PUBLISHED"), Seq("easy-jumpoff:123")) shouldBe
       Success(Some("Violates 2: has jump off; 3: invalid title; 4: invalid rights"))
   }
 
   it should "report invalid status" in {
     val emd = parseEmdContent(emdDoi)
 
-    simpleCheckerExpecting(
-      expectedBagIndexResponse = new HttpResponse[String](body = "", code = 404, headers = Map.empty),
-      loggerWarnCalledWith = Seq(
-        "violated 4: invalid rights not found",
-        "violated 5: invalid state SUBMITTED",
-      )
-    ).violations(emd, emd2ddm(emd), amd("SUBMITTED"), Seq.empty) shouldBe
+    simpleChecker(loggerExpectsWarnings = Seq(
+      "violated 4: invalid rights not found",
+      "violated 5: invalid state SUBMITTED",
+    )).violations(emd, emd2ddm(emd), amd("SUBMITTED"), Seq.empty) shouldBe
       Success(Some("Violates 4: invalid rights; 5: invalid state"))
   }
 
@@ -120,23 +123,20 @@ class TransformationCheckerSpec extends TestSupportFixture with MockFactory with
       </emd:relation>,
       emdRights
     ))
-    simpleCheckerExpecting(
-      expectedBagIndexResponse = new HttpResponse[String](body = "", code = 404, headers = Map.empty),
-      loggerWarnCalledWith = Seq(
-        "violated 6: DANS relations <dct:isVersionOf>https://doi.org/10.17026/test-123-456</dct:isVersionOf>",
-        "violated 6: DANS relations <dct:isVersionOf>http://www.persistent-identifier.nl/?identifier=urn:nbn:nl:ui:13-2ajw-cq</dct:isVersionOf>",
-        """violated 6: DANS relations <ddm:replaces scheme="id-type:URN" href="http://persistent-identifier.nl/?identifier=urn:nbn:nl:ui:13-aka-hff">Prehistorische bewoning op het World Forum gebied - Den Haag (replaces)</ddm:replaces>""",
-      )
-    ).violations(emd, emd2ddm(emd), amd("PUBLISHED"), Seq.empty) shouldBe
+    simpleChecker(loggerExpectsWarnings = Seq(
+      "violated 6: DANS relations <dct:isVersionOf>https://doi.org/10.17026/test-123-456</dct:isVersionOf>",
+      "violated 6: DANS relations <dct:isVersionOf>http://www.persistent-identifier.nl/?identifier=urn:nbn:nl:ui:13-2ajw-cq</dct:isVersionOf>",
+      """violated 6: DANS relations <ddm:replaces scheme="id-type:URN" href="http://persistent-identifier.nl/?identifier=urn:nbn:nl:ui:13-aka-hff">Prehistorische bewoning op het World Forum gebied - Den Haag (replaces)</ddm:replaces>""",
+    )).violations(emd, emd2ddm(emd), amd("PUBLISHED"), Seq.empty) shouldBe
       Success(Some("Violates 6: DANS relations"))
   }
 
   it should "report existing bag" in {
     val emd = parseEmdContent(Seq(emdDoi, emdRights))
     val result = "<bag-info><bag-id>blabla</bag-id><doi>10.80270/test-zwu-cxjx</doi></bag-info>"
-    simpleCheckerExpecting(
-      expectedBagIndexResponse = new HttpResponse[String](body = s"<result>$result</result>", code = 200, headers = Map.empty),
-      loggerWarnCalledWith = Seq(s"violated 7: is in the vault $result")
+    simpleChecker(
+      loggerExpectsWarnings = Seq(s"violated 7: is in the vault $result"),
+      mockBagIndexRespondsWith(body = s"<result>$result</result>", code = 200),
     ).violations(emd, emd2ddm(emd), amd("PUBLISHED"), Seq.empty) shouldBe
       Success(Some("Violates 7: is in the vault"))
   }
@@ -146,21 +146,30 @@ class TransformationCheckerSpec extends TestSupportFixture with MockFactory with
       <datasetState>{ state }</datasetState>
     </damd:administrative-md>
 
-  private def simpleCheckerExpecting(expectedBagIndexResponse: HttpResponse[String],
-                                     loggerWarnCalledWith: Seq[String],
-                                    ): TransformationChecker = {
-    val mockedBagIndex = new BagIndex(new URI("https://does.not.exist.dans.knaw.nl")) {
-      override def execute(doi: String): HttpResponse[String] =
-        expectedBagIndexResponse
-    }
-
+  private def simpleChecker(loggerExpectsWarnings: Seq[String],
+                            bagIndex: BagIndex = mockBagIndexRespondsWith(body = "", code = 404)
+                           ) = {
     val mockLogger = mock[UnderlyingLogger]
     (() => mockLogger.isWarnEnabled()) expects() anyNumberOfTimes() returning true
-    loggerWarnCalledWith.foreach(s =>
+    loggerExpectsWarnings.foreach(s =>
       (mockLogger.warn(_: String)) expects s once()
     )
 
-    new SimpleChecker(mockedBagIndex) {
+    new SimpleChecker(bagIndex) {
+      override lazy val logger: Logger = Logger(mockLogger)
+    }
+  }
+
+  private def themaChecker(loggerExpectsWarnings: Seq[String],
+                           bagIndex: BagIndex = mockBagIndexRespondsWith(body = "", code = 404)
+                          ) = {
+    val mockLogger = mock[UnderlyingLogger]
+    (() => mockLogger.isWarnEnabled()) expects() anyNumberOfTimes() returning true
+    loggerExpectsWarnings.foreach(s =>
+      (mockLogger.warn(_: String)) expects s once()
+    )
+
+    new ThemaChecker(bagIndex) {
       override lazy val logger: Logger = Logger(mockLogger)
     }
   }

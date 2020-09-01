@@ -37,7 +37,7 @@ case class BagIndex(bagIndexUri: URI) {
     maybeBagInfo = maybeXml.flatMap(xml => (xml \ "bag-info").theSeq.headOption)
   } yield maybeBagInfo.map(_.toOneLiner)
 
-  protected def findBagInfo(doi: String): Try[Option[String]] = Try {
+  private def findBagInfo(doi: String): Try[Option[String]] = Try {
     execute(doi)
   }.recoverWith {
     case t: Throwable => Failure(BagIndexException(s"DOI[$doi] url[$url]" + t.getMessage, t))
@@ -45,7 +45,7 @@ case class BagIndex(bagIndexUri: URI) {
     case response if response.code == 404 => None
     case response if response.code == 200 => Some(response.body)
     case response =>
-      throw BagIndexException(s"Not expected response code from bag-index. url='${ url }', doi='$doi', response: ${ response.code } - ${ response.body }", null)
+      throw BagIndexException(s"Not expected response code from bag-index. url='$url', doi='$doi', response: ${ response.code } - ${ response.body }", null)
   }
 
   protected def execute(doi: String): HttpResponse[String] = {
