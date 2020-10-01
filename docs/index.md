@@ -7,33 +7,35 @@ Retrieves a dataset from Fedora and transforms it to an AIP bag conforming to DA
 SYNOPSIS
 --------
 
-    easy-fedora2vault {-d <dataset-id> | -i <dataset-ids-file>} [-o <staged-AIP-dir>] [-u <depositor>] [-s] [-l <log-file>] <transformation>
+    easy-fedora2vault {-d <dataset-id> | -i <dataset-ids-file>} -o <staged-AIP-dir> [-s] [-l <log-file>] <transformation>
 
 DESCRIPTION
 -----------
-Tool for exporting datasets from Fedora and constructing AIP-bags to be stored in the bag stores
+Tool for exporting datasets from Fedora and constructing Archival/Submission Information Packages.
+An AIP is a [DANS-V0 bag], a SIP is a directory with a bag and a `deposit.properties` file.
+
+[DANS-V0 bag]: https://github.com/DANS-KNAW/dans-bagit-profile/blob/master/docs/versions/0.0.0.md#dans-bagit-profile-v0
 
 ARGUMENTS
 ---------
 
-     -d, --datasetId  <arg>    A single easy-dataset-id to be transformed. Use either this or the input-file
-                               argument
-     -u, --depositor  <arg>    The depositor for these datasets. If provided, only datasets from this depositor
-                               are transformed.
-     -i, --input-file  <arg>   File containing a newline-separated list of easy-dataset-ids to be transformed.
-                               Use either this or the dataset-id argument
-     -l, --log-file  <arg>     The name of the logfile in csv format. If not provided a file
-                               easy-fedora2vault-<timestamp>.csv will be created in the home-dir of the user.
-                               (default = /home/vagrant/easy-fedora2vault-2020-02-02T20:20:02.000Z.csv)
-     -o, --output-dir  <arg>   Empty directory in which to stage the created AIP bags. It will be created if it
-                               doesn't exist.
-     -s, --strict              If provided, the transformation will check whether the datasets adhere to the
-                               requirements of the chosen transformation.
-     -h, --help                Show help message
-     -v, --version             Show version of this program
-
+     -d, --datasetId  <arg>       A single easy-dataset-id to be transformed. Use either this or the input-file
+                                  argument
+     -i, --input-file  <arg>      File containing a newline-separated list of easy-dataset-ids to be transformed.
+                                  Use either this or the dataset-id argument
+     -l, --log-file  <arg>        The name of the logfile in csv format. If not provided a file
+                                  easy-fedora2vault-<timestamp>.csv will be created in the home-dir of the user.
+                                  (default = /home/vagrant/easy-fedora2vault-2020-02-02T20:20:02.000Z.csv)
+     -o, --output-dir  <arg>      Empty directory in which to stage the created IPs. It will be created if it
+                                  doesn't exist.
+     -f, --output-format  <arg>   Output format: AIP, SIP. Only required for transformation type simple.
+     -s, --strict                 If provided, the transformation will check whether the datasets adhere to the
+                                  requirements of the chosen transformation.
+     -h, --help                   Show help message
+     -v, --version                Show version of this program
+    
     trailing arguments:
-      transformation (required)   The type of transformation used. Possible values: simple, thematische-collectie.
+     transformation (required)   The type of transformation used: simple, thematische-collectie.
 
 EXAMPLES
 --------

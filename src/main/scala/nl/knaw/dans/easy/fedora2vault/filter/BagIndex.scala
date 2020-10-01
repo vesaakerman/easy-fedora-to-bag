@@ -13,25 +13,26 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package nl.knaw.dans.easy.fedora2vault
+package nl.knaw.dans.easy.fedora2vault.filter
 
 import java.io.IOException
 import java.net.URI
 
 import better.files.StringExtensions
+import nl.knaw.dans.easy.fedora2vault._
 import scalaj.http.{ Http, HttpResponse }
 
 import scala.util.{ Failure, Try }
 import scala.xml.XML
 
-case class BagIndex(bagIndexUri: URI) {
+case class BagIndex(bagIndexUri: URI) extends TargetIndex {
 
   /** An IOException is fatal for the batch of datasets */
   private case class BagIndexException(msg: String, cause: Throwable) extends IOException(msg, cause)
 
   private val url: URI = bagIndexUri.resolve("/search")
 
-  def bagInfoByDoi(doi: String): Try[Option[String]] = for {
+  override def getByDoi(doi: String): Try[Option[String]] = for {
     maybeString <- findBagInfo(doi)
     maybeXml = maybeString.map(s => XML.load(s.inputStream))
     maybeBagInfo = maybeXml.flatMap(xml => (xml \ "bag-info").theSeq.headOption)

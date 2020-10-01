@@ -23,7 +23,7 @@ import com.yourmediashelf.fedora.client.FedoraClientException
 import javax.naming.NamingEnumeration
 import javax.naming.directory.{ BasicAttributes, SearchControls, SearchResult }
 import javax.naming.ldap.InitialLdapContext
-import nl.knaw.dans.easy.fedora2vault.check.{ InvalidTransformationException, SimpleChecker, TransformationChecker }
+import nl.knaw.dans.easy.fedora2vault.filter.{ BagIndex, Filter, InvalidTransformationException, SimpleFilter }
 import nl.knaw.dans.easy.fedora2vault.fixture.{ AudienceSupport, BagIndexSupport, FileSystemSupport, TestSupportFixture }
 import org.scalamock.scalatest.MockFactory
 import resource.managed
@@ -42,18 +42,23 @@ class AppSpec extends TestSupportFixture with BagIndexSupport with MockFactory w
 
   private class MockedLdapContext extends InitialLdapContext(new java.util.Hashtable[String, String](), null)
 
-  private class MockedApp(mockedBagIndex: BagIndex = mockBagIndexRespondsWith(body = "<result/>", code = 200)
-                         ) extends EasyFedora2vaultApp(null) {
+  private class MockedApp(configuration: Configuration = null,
+                          mockedBagIndex: BagIndex = mockBagIndexRespondsWith(body = "<result/>", code = 200),
+                         ) extends EasyFedora2vaultApp(configuration) {
     override lazy val fedoraProvider: FedoraProvider = mock[FedoraProvider]
     override lazy val ldapContext: InitialLdapContext = mock[MockedLdapContext]
     override lazy val bagIndex: BagIndex = mockedBagIndex
-    val simpleChecker: SimpleChecker = SimpleChecker(bagIndex)
+    val filter: SimpleFilter = SimpleFilter(bagIndex)
+
+    // make almost private method available for tests
+    override def createBag(datasetId: DatasetId, bagDir: File, strict: Boolean, filter: Filter): Try[CsvRecord] =
+      super.createBag(datasetId, bagDir, strict, filter)
   }
 
-  private class OverriddenApp extends MockedApp {
+  private class OverriddenApp(configuration: Configuration = null) extends MockedApp(configuration) {
     /** overrides the method called by the method under test */
-    override def simpleTransform(datasetId: DatasetId, outputDir: File, strict: Boolean)
-                                (implicit transformationChecker: TransformationChecker): Try[CsvRecord] = {
+    override def createBag(datasetId: DatasetId, outputDir: File, strict: Boolean, filter: Filter): Try[CsvRecord] = {
+      outputDir.parent.createDirectories()
       datasetId match {
         case _ if datasetId.startsWith("fatal") =>
           Failure(new FedoraClientException(300, "mocked exception"))
@@ -65,24 +70,57 @@ class AppSpec extends TestSupportFixture with BagIndexSupport with MockFactory w
           Failure(new Exception(datasetId))
         case _ =>
           outputDir.createFile().writeText(datasetId)
-          Success(CsvRecord(datasetId, UUID.randomUUID(), "", "", "simple", "OK"))
+          Success(CsvRecord(datasetId, UUID.randomUUID(), doi = "testDOI", depositor = "testUser", transformationType = "simple", comment = "OK"))
       }
     }
   }
 
-  "simpleTransforms" should "report success" in {
+  "createSips" should "report success" in {
+    val ids = Iterator("success:1", "notSimple:1", "whoops:1", "success:1")
+    val outputDir = (testDir / "output").createDirectories()
+    val stagingDir = testDir / "staging"
+    val app = new OverriddenApp(Configuration(null, null, null, null, stagingDir))
+    val printer = CsvRecord.csvFormat.print(new StringWriter()) // content verified with simpleTransforms
+    val triedMessage = app.createSips(ids, outputDir, strict = true, SimpleFilter())(printer)
+    triedMessage shouldBe Success("no fedora/IO errors")
+
+    // two directories with one entry each
+    stagingDir.list.toList should have length 2
+    stagingDir.listRecursively.toList should have length 4
+
+    // two directories with two entries each
+    outputDir.list.toList should have length 2
+    outputDir.listRecursively.toList should have length 6
+
+    // two deposits with almost the same deposit.properties
+    val props = outputDir.listRecursively.toList.filter(_.name == "deposit.properties")
+    props should have length 2
+    props.map(linesWithoutTimestamp).distinct shouldBe List(
+      """state.label = SUBMITTED
+        |state.description = Deposit is valid and ready for post-submission processing
+        |depositor.userId = testUser
+        |identifier.doi = testDOI
+        |identifier.fedora = success:1
+        |deposit.origin = easy-fedora2vault""".stripMargin)
+  }
+
+  private def linesWithoutTimestamp(file: File) = {
+    file.contentAsString.split("\n").filterNot(_.contains("timestamp")).mkString("\n")
+  }
+
+  "createAips" should "report success" in {
     val ids = Iterator("success:1", "success:2")
     val outputDir = (testDir / "output").createDirectories()
     val sw = new StringWriter()
     val app = new OverriddenApp()
-    app.simpleTransForms(ids, outputDir, strict = true, sw)(app.simpleChecker) shouldBe Success("no fedora/IO errors")
+    app.createAips(ids, outputDir, strict = true, app.filter)(CsvRecord.csvFormat.print(sw)) shouldBe Success("no fedora/IO errors")
     sw.toString should (fullyMatch regex
       """easyDatasetId,uuid,doi,depositor,transformationType,comment
-        |success:1,.*,,,simple,OK
-        |success:2,.*,,,simple,OK
+        |success:1,.*,testDOI,testUser,simple,OK
+        |success:2,.*,testDOI,testUser,simple,OK
         |""".stripMargin
       )
-    outputDir.list.toSeq should have length 2
+    outputDir.listRecursively.toSeq should have length 2
   }
 
   it should "report failure" in {
@@ -90,21 +128,21 @@ class AppSpec extends TestSupportFixture with BagIndexSupport with MockFactory w
     val outputDir = (testDir / "output").createDirectories()
     val sw = new StringWriter()
     val app = new OverriddenApp()
-    app.simpleTransForms(ids, outputDir, strict = true, sw)(app.simpleChecker) should matchPattern {
+    app.createAips(ids, outputDir, strict = true, app.filter)(CsvRecord.csvFormat.print(sw)) should matchPattern {
       case Failure(t) if t.getMessage == "mocked exception" =>
     }
     sw.toString should (fullyMatch regex
       """easyDatasetId,uuid,doi,depositor,transformationType,comment
-        |success:1,.*,,,simple,OK
+        |success:1,.*,testDOI,testUser,simple,OK
         |failure:2,.*,,,simple,FAILED: java.lang.Exception: failure:2
-        |notSimple:3,.*,,,simple,FAILED: nl.knaw.dans.easy.fedora2vault.check.InvalidTransformationException: mocked
-        |success:4,.*,,,simple,OK
+        |notSimple:3,.*,,,simple,FAILED: .*InvalidTransformationException: mocked
+        |success:4,.*,testDOI,testUser,simple,OK
         |""".stripMargin
       )
     outputDir.list.toSeq should have length 4
   }
 
-  "simpleTransform" should "process DepositApi" in {
+  "createBag" should "process DepositApi" in {
     val app = new MockedApp()
     implicit val fedoraProvider: FedoraProvider = app.fedoraProvider
     expectedAudiences(Map("easy-discipline:77" -> "D13200"))
@@ -116,7 +154,7 @@ class AppSpec extends TestSupportFixture with BagIndexSupport with MockFactory w
     )
 
     val uuid = UUID.randomUUID
-    app.simpleTransform("easy-dataset:17", testDir / "bags" / uuid.toString, strict = true)(app.simpleChecker) shouldBe
+    app.createBag("easy-dataset:17", testDir / "bags" / uuid.toString, strict = true, app.filter) shouldBe
       Success(CsvRecord("easy-dataset:17", uuid, "10.17026/test-Iiib-z9p-4ywa", "user001", "simple", "OK"))
 
     val metadata = (testDir / "bags").children.next() / "metadata"
@@ -140,7 +178,7 @@ class AppSpec extends TestSupportFixture with BagIndexSupport with MockFactory w
     )
 
     val uuid = UUID.randomUUID
-    app.simpleTransform("easy-dataset:17", testDir / "bags" / uuid.toString, strict = false)(app.simpleChecker) shouldBe
+    app.createBag("easy-dataset:17", testDir / "bags" / uuid.toString, strict = false, app.filter) shouldBe
       Success(CsvRecord("easy-dataset:17", uuid, "10.17026/test-Iiib-z9p-4ywa", "user001", "not strict simple", "Violates 2: has jump off"))
 
     val metadata = (testDir / "bags").children.next() / "metadata"
@@ -160,7 +198,7 @@ class AppSpec extends TestSupportFixture with BagIndexSupport with MockFactory w
     expectedFoXmls(app.fedoraProvider, sampleFoXML / "DepositApi.xml")
 
     val uuid = UUID.randomUUID
-    app.simpleTransform("easy-dataset:17", testDir / "bags" / uuid.toString, strict = true)(app.simpleChecker) should matchPattern {
+    app.createBag("easy-dataset:17", testDir / "bags" / uuid.toString, strict = true, app.filter) should matchPattern {
       case Failure(_: InvalidTransformationException) =>
     }
 
@@ -179,7 +217,7 @@ class AppSpec extends TestSupportFixture with BagIndexSupport with MockFactory w
     expectedManagedStreams(app.fedoraProvider, mockContentOfFile35)
 
     val uuid = UUID.randomUUID
-    app.simpleTransform("easy-dataset:13", testDir / "bags" / uuid.toString, strict = true)(app.simpleChecker) shouldBe
+    app.createBag("easy-dataset:13", testDir / "bags" / uuid.toString, strict = true, app.filter) shouldBe
       Success(CsvRecord("easy-dataset:13", uuid, "10.17026/mocked-Iiib-z9p-4ywa", "user001", "simple", "OK"))
 
     val metadata = (testDir / "bags").children.next() / "metadata"
@@ -214,7 +252,7 @@ class AppSpec extends TestSupportFixture with BagIndexSupport with MockFactory w
     expectedSubordinates(app.fedoraProvider, "easy-file:35")
     expectedManagedStreams(app.fedoraProvider, mockContentOfFile35)
 
-    app.simpleTransform("easy-dataset:13", testDir / "bags" / UUID.randomUUID.toString, strict = true)(app.simpleChecker) should matchPattern {
+    app.createBag("easy-dataset:13", testDir / "bags" / UUID.randomUUID.toString, strict = true, app.filter) should matchPattern {
       case Failure(e) if e.getMessage == "easy-file:35 <visibleTo> not found" =>
     }
   }

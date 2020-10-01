@@ -16,8 +16,9 @@
 package nl.knaw.dans.easy.fedora2vault
 
 import better.files.File
+import nl.knaw.dans.easy.fedora2vault.OutputFormat._
 import nl.knaw.dans.easy.fedora2vault.TransformationType._
-import nl.knaw.dans.easy.fedora2vault.check._
+import nl.knaw.dans.easy.fedora2vault.filter._
 import nl.knaw.dans.lib.error._
 import nl.knaw.dans.lib.logging.DebugEnhancedLogging
 
@@ -40,25 +41,25 @@ object Command extends App with DebugEnhancedLogging {
     .doIfFailure { case NonFatal(e) => println(s"FAILED: ${ e.getMessage }") }
 
   private def runSubcommand(app: EasyFedora2vaultApp): Try[FeedBackMessage] = {
-    commandLine.transformation() match {
-      case SIMPLE => simpleTransform(app)(SimpleChecker(app.bagIndex))
-      case THEMA => simpleTransform(app)(ThemaChecker(app.bagIndex))
-      case _ => Failure(new Exception(s"transformation type not implemented"))
+    lazy val ids = commandLine
+      .datasetId.map(Iterator(_))
+      .getOrElse(commandLine.inputFile()
+        .lineIterator
+        .filterNot(_.startsWith("#"))
+      )
+    lazy val outputDir = commandLine.outputDir()
+    lazy val strict = commandLine.strictMode()
+    lazy val printer = CsvRecord.printer(commandLine.logFile())
+
+    (commandLine.transformation(), commandLine.outputFormat()) match {
+      case (SIMPLE, SIP) =>
+        printer.apply(app.createSips(ids, outputDir, strict, SimpleFilter()))
+      case (SIMPLE, AIP) =>
+        printer.apply(app.createAips(ids, outputDir, strict, SimpleFilter(app.bagIndex)))
+      case (THEMA, AIP) =>
+        printer.apply(app.createAips(ids, outputDir, strict, ThemaFilter(app.bagIndex)))
+      case tuple =>
+        Failure(new NotImplementedError(s"$tuple not implemented"))
     }
   }.map(msg => s"$msg, for details see ${ commandLine.logFile().toJava.getAbsolutePath }")
-
-  private def simpleTransform(app: EasyFedora2vaultApp)
-                             (implicit transformationChecker: TransformationChecker) = {
-    app.simpleTransForms(
-      commandLine
-        .datasetId.map(Iterator(_))
-        .getOrElse(commandLine.inputFile()
-          .lineIterator
-          .filterNot(_.startsWith("#"))
-        ),
-      commandLine.outputDir(),
-      commandLine.strictMode(),
-      commandLine.logFile().newFileWriter(append = true),
-    )
-  }
 }

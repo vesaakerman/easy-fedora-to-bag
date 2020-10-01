@@ -15,11 +15,12 @@
  */
 package nl.knaw.dans.easy.fedora2vault
 
-import java.io.{ IOException, InputStream, Writer }
+import java.io.{ IOException, InputStream }
 import java.nio.file.Paths
 import java.util.UUID
 
-import better.files.{ Dispose, File, StringExtensions }
+import better.files.File.CopyOptions
+import better.files.{ File, StringExtensions }
 import cats.instances.list._
 import cats.instances.try_._
 import cats.syntax.traverse._
@@ -30,8 +31,8 @@ import nl.knaw.dans.bag.v0.DansV0Bag
 import nl.knaw.dans.easy.fedora2vault.Command.FeedBackMessage
 import nl.knaw.dans.easy.fedora2vault.FileItem.{ checkNotImplemented, filesXml }
 import nl.knaw.dans.easy.fedora2vault.FoXml.{ getEmd, _ }
-import nl.knaw.dans.easy.fedora2vault.TransformationType.SIMPLE
-import nl.knaw.dans.easy.fedora2vault.check._
+import nl.knaw.dans.easy.fedora2vault.TransformationType._
+import nl.knaw.dans.easy.fedora2vault.filter._
 import nl.knaw.dans.lib.error._
 import nl.knaw.dans.lib.logging.DebugEnhancedLogging
 import nl.knaw.dans.pf.language.emd.EasyMetadataImpl
@@ -46,38 +47,47 @@ import scala.xml.{ Elem, Node }
 class EasyFedora2vaultApp(configuration: Configuration) extends DebugEnhancedLogging {
   lazy val fedoraProvider: FedoraProvider = new FedoraProvider(new FedoraClient(configuration.fedoraCredentials))
   lazy val ldapContext: InitialLdapContext = new InitialLdapContext(configuration.ldapEnv, null)
-  lazy val bagIndex: BagIndex = BagIndex(configuration.bagIndexUrl)
+  lazy val bagIndex: BagIndex = filter.BagIndex(configuration.bagIndexUrl)
   private lazy val ldap = new Ldap(ldapContext)
   private val emdUnmarshaller = new EmdUnmarshaller(classOf[EasyMetadataImpl])
 
-  def simpleTransForms(datasetIds: Iterator[DatasetId], outputDir: File, strict: Boolean, writer: Writer)
-                      (implicit transformationChecker: TransformationChecker): Try[FeedBackMessage] = {
-    new Dispose(CsvRecord.csvFormat.print(writer))
-      .apply(simpleTransForms(_, datasetIds, outputDir, strict))
-  }
+  def createAips(input: Iterator[DatasetId], outputDir: File, strict: Boolean, filter: Filter)
+                (printer: CSVPrinter): Try[FeedBackMessage] = input.map { datasetId =>
+    val bagDir = outputDir / UUID.randomUUID.toString
+    val triedCsvRecord = createBag(datasetId, bagDir, strict, filter)
+    errorHandling(triedCsvRecord, printer, datasetId, bagDir)
+  }.failFastOr(Success("no fedora/IO errors"))
 
-  private def simpleTransForms(printer: CSVPrinter, input: Iterator[DatasetId], outputDir: File, strict: Boolean)
-                              (implicit transformationChecker: TransformationChecker): Try[FeedBackMessage] = input
-    .map(simpleTransform(_, outputDir / UUID.randomUUID.toString, strict, printer))
-    .failFastOr(Success("no fedora/IO errors"))
+  def createSips(input: Iterator[DatasetId], outputDir: File, strict: Boolean, filter: Filter)
+                (printer: CSVPrinter): Try[FeedBackMessage] = input.map { datasetId =>
+    val sipUUID = UUID.randomUUID.toString
+    val bagUUID = UUID.randomUUID.toString
+    val depositDir = (configuration.stagingDir / sipUUID)
+    // exceptions after createAip are fatal for the batch,
+    // hence not reported in comment field of csvRecord
+    val triedCsvRecord = for {
+      csvRecord <- createBag(datasetId, depositDir / bagUUID, strict, filter)
+      _ <- DepositProperties.create(depositDir, csvRecord)
+      _ = depositDir.moveTo(outputDir / sipUUID)(CopyOptions.atomically)
+    } yield csvRecord
+    errorHandling(triedCsvRecord, printer, datasetId, depositDir)
+  }.failFastOr(Success("no fedora/IO errors"))
 
-  private def simpleTransform(datasetId: DatasetId, bagDir: File, strict: Boolean, printer: CSVPrinter)
-                             (implicit transformationChecker: TransformationChecker): Try[Any] = {
-    simpleTransform(datasetId, bagDir, strict)
+  private def errorHandling(triedCsvRecord: Try[CsvRecord], printer: CSVPrinter, datasetId: DatasetId, ipDir: File) = {
+    triedCsvRecord
       .doIfFailure {
-        case t: InvalidTransformationException => logger.warn(s"$datasetId -> $bagDir failed: ${ t.getMessage }")
-      }.recoverWith {
-      case t: FedoraClientException if t.getStatus != 404 => Failure(t)
-      case t: Exception if t.isInstanceOf[IOException] => Failure(t)
-      case t => Success(CsvRecord(
-        datasetId, UUID.fromString(bagDir.name), doi = "", depositor = "", SIMPLE.toString, s"FAILED: $t"
-      ))
-    }
-      .doIfSuccess(_.print(printer))
+        case t: InvalidTransformationException => logger.warn(s"$datasetId -> $ipDir failed: ${ t.getMessage }")
+      }
+      .recoverWith {
+        case t: FedoraClientException if t.getStatus != 404 => Failure(t)
+        case t: Exception if t.isInstanceOf[IOException] => Failure(t)
+        case t => Success(CsvRecord(
+          datasetId, UUID.fromString(ipDir.name), doi = "", depositor = "", SIMPLE.toString, s"FAILED: $t"
+        ))
+      }.doIfSuccess(_.print(printer))
   }
 
-  def simpleTransform(datasetId: DatasetId, bagDir: File, strict: Boolean)
-                     (implicit transformationChecker: TransformationChecker): Try[CsvRecord] = {
+  protected[EasyFedora2vaultApp] def createBag(datasetId: DatasetId, bagDir: File, strict: Boolean, filter: Filter): Try[CsvRecord] = {
 
     def managedMetadataStream(foXml: Elem, streamId: String, bag: DansV0Bag, metadataFile: String) = {
       managedStreamLabel(foXml, streamId)
@@ -85,7 +95,7 @@ class EasyFedora2vaultApp(configuration: Configuration) extends DebugEnhancedLog
           val extension = label.split("[.]").last
           val bagFile = s"$metadataFile.$extension"
           fedoraProvider.disseminateDatastream(datasetId, streamId)
-            .map(addMetadataStream(bag, bagFile))
+            .map(addMetadataStreamTo(bag, bagFile))
             .tried.flatten
         }
     }
@@ -100,27 +110,27 @@ class EasyFedora2vaultApp(configuration: Configuration) extends DebugEnhancedLog
         .map(id => getAudience(id.getValue)).collectResults
       ddm <- DDM(emd, audiences)
       fedoraIDs <- fedoraProvider.getSubordinates(datasetId)
-      maybeTransformationViolations <- transformationChecker.violations(emd, ddm, amd, fedoraIDs)
-      _ = if (strict) maybeTransformationViolations.foreach(msg => throw InvalidTransformationException(msg))
+      maybeFilterViolations <- filter.violations(emd, ddm, amd, fedoraIDs)
+      _ = if (strict) maybeFilterViolations.foreach(msg => throw InvalidTransformationException(msg))
       _ = logger.info(s"Creating $bagDir from $datasetId with owner $depositor")
       bag <- DansV0Bag.empty(bagDir)
         .map(_.withEasyUserAccount(depositor).withCreated(DateTime.now()))
-      _ <- addXmlMetadata(bag, "emd.xml")(emdXml)
-      _ <- addXmlMetadata(bag, "amd.xml")(amd)
+      _ <- addXmlMetadataTo(bag, "emd.xml")(emdXml)
+      _ <- addXmlMetadataTo(bag, "amd.xml")(amd)
       _ <- getDdm(foXml)
-        .map(addXmlMetadata(bag, "original/dataset.xml"))
+        .map(addXmlMetadataTo(bag, "original/dataset.xml"))
         .getOrElse(Success(()))
-      _ <- addXmlMetadata(bag, "dataset.xml")(ddm)
+      _ <- addXmlMetadataTo(bag, "dataset.xml")(ddm)
       _ <- getMessageFromDepositor(foXml)
-        .map(addXmlMetadata(bag, "depositor-info/message-from-depositor.txt"))
+        .map(addXmlMetadataTo(bag, "depositor-info/message-from-depositor.txt"))
         .getOrElse(Success(()))
       _ <- getFilesXml(foXml)
-        .map(addXmlMetadata(bag, "original/files.xml"))
+        .map(addXmlMetadataTo(bag, "original/files.xml"))
         .getOrElse(Success(()))
       _ <- getAgreementsXml(foXml)
-        .map(addAgreements(bag))
+        .map(addAgreementsTo(bag))
         .getOrElse(AgreementsXml(foXml, ldap)
-          .map(addAgreements(bag)))
+          .map(addAgreementsTo(bag)))
       _ <- managedMetadataStream(foXml, "ADDITIONAL_LICENSE", bag, "license")
         .getOrElse(Success(()))
       _ <- managedMetadataStream(foXml, "DATASET_LICENSE", bag, "depositor-info/depositor-agreement")
@@ -128,7 +138,7 @@ class EasyFedora2vaultApp(configuration: Configuration) extends DebugEnhancedLog
       fileItems <- fedoraIDs.filter(_.startsWith("easy-file:"))
         .toList.traverse(addPayloadFileTo(bag))
       _ <- checkNotImplemented(fileItems, logger)
-      _ <- addXmlMetadata(bag, "files.xml")(filesXml(fileItems))
+      _ <- addXmlMetadataTo(bag, "files.xml")(filesXml(fileItems))
       _ <- bag.save()
       doi = emd.getEmdIdentifier.getDansManagedDoi
     } yield CsvRecord(
@@ -136,8 +146,8 @@ class EasyFedora2vaultApp(configuration: Configuration) extends DebugEnhancedLog
       UUID.fromString(bagDir.name),
       doi,
       depositor,
-      transformationType = maybeTransformationViolations.map(_ => "not strict simple").getOrElse("simple"),
-      maybeTransformationViolations.getOrElse("OK"),
+      transformationType = maybeFilterViolations.map(_ => "not strict simple").getOrElse(SIMPLE.toString),
+      maybeFilterViolations.getOrElse("OK"),
     )
   }
 
@@ -147,15 +157,15 @@ class EasyFedora2vaultApp(configuration: Configuration) extends DebugEnhancedLog
     )
   }
 
-  private def addMetadataStream(bag: DansV0Bag, target: String)(content: InputStream): Try[Any] = {
+  private def addMetadataStreamTo(bag: DansV0Bag, target: String)(content: InputStream): Try[Any] = {
     bag.addTagFile(content, Paths.get(s"metadata/$target"))
   }
 
-  private def addXmlMetadata(bag: DansV0Bag, target: String)(content: Node): Try[Any] = {
+  private def addXmlMetadataTo(bag: DansV0Bag, target: String)(content: Node): Try[Any] = {
     bag.addTagFile(content.serialize.inputStream, Paths.get(s"metadata/$target"))
   }
 
-  private def addAgreements(bag: DansV0Bag)(content: Node): Try[Any] = {
+  private def addAgreementsTo(bag: DansV0Bag)(content: Node): Try[Any] = {
     bag.addTagFile(content.serialize.inputStream, Paths.get(s"metadata/depositor-info/agreements.xml"))
   }
 
@@ -172,13 +182,13 @@ class EasyFedora2vaultApp(configuration: Configuration) extends DebugEnhancedLog
       _ <- bag.save()
       fileStream = getStreamRoot(streamId, foXml)
       maybeDigest = fileStream.flatMap(n => (n \\ "contentDigest").theSeq.headOption)
-      _ <- maybeDigest.map(validate(bag.baseDir / s"data/$path", bag, fedoraFileId))
+      _ <- maybeDigest.map(validateChecksum(bag.baseDir / s"data/$path", bag, fedoraFileId))
         .getOrElse(Success(logger.warn(s"No digest found for $fedoraFileId ${ fileStream.map(_.toOneLiner).getOrElse("") }")))
       fileItem <- FileItem(foXml)
     } yield fileItem
   }.recoverWith { case e => Failure(new Exception(s"$fedoraFileId ${ e.getMessage }", e)) }
 
-  private def validate(file: File, bag: DansV0Bag, fedoraFileId: String)(maybeDigest: Node) = Try {
+  private def validateChecksum(file: File, bag: DansV0Bag, fedoraFileId: String)(maybeDigest: Node) = Try {
     val algorithms = Map(
       "SHA-1" -> ChecksumAlgorithm.SHA1,
       "MD-5" -> ChecksumAlgorithm.MD5,

@@ -18,6 +18,7 @@ package nl.knaw.dans.easy.fedora2vault
 import java.nio.file.{ Path, Paths }
 
 import better.files.File
+import nl.knaw.dans.easy.fedora2vault.OutputFormat.OutputFormat
 import nl.knaw.dans.easy.fedora2vault.TransformationType.TransformationType
 import org.rogach.scallop.{ ScallopConf, ScallopOption, ValueConverter, singleArgConverter }
 
@@ -28,10 +29,10 @@ class CommandLineOptions(args: Array[String], configuration: Configuration) exte
   editBuilder(_.setHelpWidth(110))
   printedName = "easy-fedora2vault"
   version(configuration.version)
-  val description: String = s"""Tool for exporting datasets from Fedora and constructing AIP-bags to be stored in the bag stores"""
+  val description: String = s"""Tool for exporting datasets from Fedora and constructing Archival/Submission Information Packages."""
   val synopsis: String =
     s"""
-       |  easy-fedora2vault {-d <dataset-id> | -i <dataset-ids-file>} [-o <staged-AIP-dir>] [-u <depositor>] [-s] [-l <log-file>] <transformation>
+       |  easy-fedora2vault {-d <dataset-id> | -i <dataset-ids-file>} -o <staged-AIP-dir> [-s] [-l <log-file>] <transformation>
      """.stripMargin
 
   version(s"$printedName v${ configuration.version }")
@@ -47,6 +48,7 @@ class CommandLineOptions(args: Array[String], configuration: Configuration) exte
        |""".stripMargin)
 
   implicit val transformationTypeConverter: ValueConverter[TransformationType] = singleArgConverter(TransformationType.withName)
+  implicit val outputFormatConverter: ValueConverter[OutputFormat] = singleArgConverter(OutputFormat.withName)
 
   val datasetId: ScallopOption[DatasetId] = opt(name = "datasetId", short = 'd',
     descr = "A single easy-dataset-id to be transformed. Use either this or the input-file argument")
@@ -54,10 +56,10 @@ class CommandLineOptions(args: Array[String], configuration: Configuration) exte
     descr = "File containing a newline-separated list of easy-dataset-ids to be transformed. Use either this or the dataset-id argument")
   val inputFile: ScallopOption[File] = inputPath.map(File(_))
   private val outputDirPath: ScallopOption[Path] = opt(name = "output-dir", short = 'o', required = true,
-    descr = "Empty directory in which to stage the created AIP bags. It will be created if it doesn't exist.")
+    descr = "Empty directory in which to stage the created IPs. It will be created if it doesn't exist.")
   val outputDir: ScallopOption[File] = outputDirPath.map(File(_))
-  val depositor: ScallopOption[Depositor] = opt(name = "depositor", short = 'u',
-    descr = "The depositor for these datasets. If provided, only datasets from this depositor are transformed.")
+  val outputFormat: ScallopOption[OutputFormat] = opt(name = "output-format", short = 'f',
+    descr = OutputFormat.values.mkString("Output format: ", ", ", ". Only required for transformation type simple."))
   private val logFilePath: ScallopOption[Path] = opt(name = "log-file", short = 'l',
     descr = s"The name of the logfile in csv format. If not provided a file $printedName-<timestamp>.csv will be created in the home-dir of the user.",
     default = Some(Paths.get(Properties.userHome).resolve(s"$printedName-$now.csv")))
@@ -65,9 +67,8 @@ class CommandLineOptions(args: Array[String], configuration: Configuration) exte
   val strictMode: ScallopOption[Boolean] = opt(name = "strict", short = 's',
     descr = "If provided, the transformation will check whether the datasets adhere to the requirements of the chosen transformation.")
   val transformation: ScallopOption[TransformationType] = trailArg(name = "transformation",
-    descr = s"The type of transformation used. Possible values: ${ TransformationType.values.mkString(", ") }.")
+    descr = TransformationType.values.mkString("The type of transformation used: ", ", ", "."))
 
-  requireOne(datasetId, inputPath)
 
   validatePathExists(inputPath)
   validatePathIsFile(inputPath)
