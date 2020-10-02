@@ -86,6 +86,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
       .replaceAll("\n +<", "\n<").trim
       .replace("\n<dct:relation/>", "").trim
     triedDdm.map(normalized) shouldBe Success(expectedDdm)
+    assume(schemaIsAvailable)
     triedDdm.flatMap(validate) shouldBe Success(())
   }
 
@@ -94,11 +95,16 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
     val triedDdm = getEmd("DepositApi.xml").flatMap(DDM(_, Seq("D13200")))
     triedDdm shouldBe a[Success[_]]
 
-    // round trip test (foXml/EMD was created from the foXML/DDM by easy-ingest-flow)
-    triedDdm.map(normalized) shouldBe triedFoXml.map(foXml =>
+    // round trip test: create DDM from EMD
+    // * easy-deposit-api created DDM + EMD
+    // * easy-ingest-flow copied both into foXml and extended EMD, not DDM
+    triedDdm.map(normalized(_).split("\n").filterNot(_.contains("URN")).mkString("\n")
+    ) shouldBe triedFoXml.map(foXml =>
       normalized((foXml \\ "DDM").head)
+        // just another prefix for the namespace
         .replaceAll("dcterms:", "dct:")
-        .replaceAll("""<dcx-dai:name xml:lang="nld">""", """<dcx-dai:name>""") // TODO api bug? lang on title?
+        // TODO api bug? lang on title?
+        .replaceAll("""<dcx-dai:name xml:lang="nld">""", """<dcx-dai:name>""")
     )
     assume(schemaIsAvailable)
     triedDdm.flatMap(validate) shouldBe Success(())
@@ -138,6 +144,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
         </ddm:dcmiMetadata>
        </ddm:DDM>
      ))
+    assume(schemaIsAvailable)
     triedDDM.flatMap(validate) shouldBe Success(())
   }
 
@@ -204,6 +211,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
         </ddm:dcmiMetadata>
       </ddm:DDM>
     ))
+    assume(schemaIsAvailable)
     triedDDM.flatMap(validate) shouldBe Success(())
   }
 
@@ -351,6 +359,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
         </ddm:dcmiMetadata>
       </ddm:DDM>
     ))
+    assume(schemaIsAvailable)
     triedDDM.flatMap(validate) should failWithNotImplementedElement
   }
 
@@ -562,6 +571,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
         </ddm:dcmiMetadata>
       </ddm:DDM>
     ))
+    assume(schemaIsAvailable)
     triedDDM.flatMap(validate) should failWithNotImplementedElement
   }
 
@@ -604,6 +614,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
         </ddm:dcmiMetadata>
       </ddm:DDM>
     ))
+    assume(schemaIsAvailable)
     triedDDM.flatMap(validate) should failWithNotImplementedElement
   }
 
