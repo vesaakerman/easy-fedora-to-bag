@@ -14,13 +14,13 @@
 # limitations under the License.
 #
 
-site_name: easy-fedora2vault
+site_name: easy-fedora-to-bag
 theme:
   name: dans
   disclaimer: false
 
-repo_name: DANS-KNAW/easy-fedora2vault
-repo_url: https://github.com/DANS-KNAW/easy-fedora2vault
+repo_name: DANS-KNAW/easy-fedora-to-bag
+repo_url: https://github.com/DANS-KNAW/easy-fedora-to-bag
 
 nav:
   - Manual: index.md

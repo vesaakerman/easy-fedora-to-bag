@@ -17,5 +17,5 @@
 
 echo -n "Pre-creating log..."
 TEMPDIR=data
-touch $TEMPDIR/easy-fedora2vault.log
+touch $TEMPDIR/easy-fedora-to-bag.log
 echo "OK"

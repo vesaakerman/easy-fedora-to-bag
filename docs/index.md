@@ -1,13 +1,13 @@
-easy-fedora2vault
-==============
-[![Build Status](https://travis-ci.org/DANS-KNAW/easy-fedora2vault.png?branch=master)](https://travis-ci.org/DANS-KNAW/easy-fedora2vault)
+easy-fedora-to-bag
+==================
+[![Build Status](https://travis-ci.org/DANS-KNAW/easy-fedora-to-bag.png?branch=master)](https://travis-ci.org/DANS-KNAW/easy-fedora-to-bag)
 
 Retrieves a dataset from Fedora and transforms it to an AIP bag conforming to DANS-BagIt-Profile v0
 
 SYNOPSIS
 --------
 
-    easy-fedora2vault {-d <dataset-id> | -i <dataset-ids-file>} -o <staged-AIP-dir> [-s] [-l <log-file>] <transformation>
+    easy-fedora-to-bag {-d <dataset-id> | -i <dataset-ids-file>} -o <staged-AIP-dir> [-s] [-l <log-file>] <transformation>
 
 DESCRIPTION
 -----------
@@ -24,8 +24,8 @@ ARGUMENTS
      -i, --input-file  <arg>      File containing a newline-separated list of easy-dataset-ids to be transformed.
                                   Use either this or the dataset-id argument
      -l, --log-file  <arg>        The name of the logfile in csv format. If not provided a file
-                                  easy-fedora2vault-<timestamp>.csv will be created in the home-dir of the user.
-                                  (default = /home/vagrant/easy-fedora2vault-2020-02-02T20:20:02.000Z.csv)
+                                  easy-fedora-to-bag-<timestamp>.csv will be created in the home-dir of the user.
+                                  (default = /home/vagrant/easy-fedora-to-bag-2020-02-02T20:20:02.000Z.csv)
      -o, --output-dir  <arg>      Empty directory in which to stage the created IPs. It will be created if it
                                   doesn't exist.
      -f, --output-format  <arg>   Output format: AIP, SIP. Only required for transformation type simple.
@@ -40,14 +40,14 @@ ARGUMENTS
 EXAMPLES
 --------
 
-    $ easy-fedora2vault -d easy-dataset:1001 -o ~/stagedAIPs simple
+    $ easy-fedora-to-bag -d easy-dataset:1001 -o ~/stagedAIPs simple
         creates a directory in '~/stagedAIPs'. This directory is an AIP bag, it has the UUID as the directory name, and contains all relevant information from 'easy-dataset:1001' using the 'simple' transformation.
     
-    $ easy-fedora2vault -d easy-dataset:1001 -s -o ~/stagedAIPs simple
+    $ easy-fedora-to-bag -d easy-dataset:1001 -s -o ~/stagedAIPs simple
         easy-dataset:1001 is transformed according to the simple transformation, but only if it fulfils the requirements. The AIP bag is generated in directory '~/stagedAIPs'.
     
-    $ easy-fedora2vault -s -u testDepositor -i dataset_ids.txt -o ./stagedAIPs -l ./outputLogfile.csv simple
-        creates a bag in './stagedAIPs' for each dataset in 'dataset_ids.txt' deposited by 'testDepositor' using the 'simple' transformation. If a dataset does not adhere to the 'simple' requirements, or is not deposited by 'testDepositor', it will not be considered and an explanation will be recorded in 'outputLogfile.csv'. 
+    $ easy-fedora-to-bag -s -i dataset_ids.txt -o ./stagedAIPs -l ./outputLogfile.csv simple
+        creates a bag in './stagedAIPs' for each dataset in 'dataset_ids.txt' using the 'simple' transformation. If a dataset does not adhere to the 'simple' requirements, or is not deposited by 'testDepositor', it will not be considered and an explanation will be recorded in 'outputLogfile.csv'. 
 
 
 RESULTING FILES
@@ -81,7 +81,7 @@ With the option `--strict` the transformation will check that the input dataset 
 INSTALLATION AND CONFIGURATION
 ------------------------------
 Currently this project is build only as an RPM package for RHEL7/CentOS7 and later. The RPM will install the binaries to
-`/opt/dans.knaw.nl/easy-fedora2vault` and the configuration files to `/etc/opt/dans.knaw.nl/easy-fedora2vault`.
+`/opt/dans.knaw.nl/easy-fedora-to-bag` and the configuration files to `/etc/opt/dans.knaw.nl/easy-fedora-to-bag`.
 
 BUILDING FROM SOURCE
 --------------------
@@ -94,8 +94,8 @@ Prerequisites:
 
 Steps:
 
-        git clone https://github.com/DANS-KNAW/easy-fedora2vault.git
-        cd easy-fedora2vault
+        git clone https://github.com/DANS-KNAW/easy-fedora-to-bag.git
+        cd easy-fedora-to-bag
         mvn clean install
 
 If the `rpm` executable is found at `/usr/local/bin/rpm`, the build profile that includes the RPM
