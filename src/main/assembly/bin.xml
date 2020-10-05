@@ -40,9 +40,9 @@
             <directory>${project.basedir}/src/main/assembly/dist/bin</directory>
             <outputDirectory>bin</outputDirectory>
             <includes>
-                <include>easy-fedora2vault</include>
-                <include>easy-fedora2vault-service-start</include>
-                <include>easy-fedora2vault-initd.sh</include>
+                <include>easy-fedora-to-bag</include>
+                <include>easy-fedora-to-bag-service-start</include>
+                <include>easy-fedora-to-bag-initd.sh</include>
             </includes>
             <fileMode>0755</fileMode>
         </fileSet>

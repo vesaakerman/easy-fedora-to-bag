@@ -6,9 +6,9 @@
         </encoder>
     </appender>
     <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
-        <file>data/easy-fedora2vault.log</file>
+        <file>data/easy-fedora-to-bag.log</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-            <fileNamePattern>data/easy-fedora2vault.%d{yyyy-MM-dd}.log</fileNamePattern>
+            <fileNamePattern>data/easy-fedora-to-bag.%d{yyyy-MM-dd}.log</fileNamePattern>
             <maxHistory>30</maxHistory>
         </rollingPolicy>
         <encoder>

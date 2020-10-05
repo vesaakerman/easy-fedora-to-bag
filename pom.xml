@@ -26,16 +26,16 @@
     </parent>
 
     <groupId>nl.knaw.dans.easy</groupId>
-    <artifactId>easy-fedora2vault</artifactId>
+    <artifactId>easy-fedora-to-bag</artifactId>
     <version>1.0.3-SNAPSHOT</version>
 
-    <name>EASY Fedora2vault</name>
+    <name>EASY Fedora to Bag</name>
     <description>Tool for exporting datasets from Fedora and constructing Archival/Submission Information Packages.</description>
-    <url>https://github.com/DANS-KNAW/easy-fedora2vault</url>
+    <url>https://github.com/DANS-KNAW/easy-fedora-to-bag</url>
     <inceptionYear>2020</inceptionYear>
 
     <properties>
-        <main-class>nl.knaw.dans.easy.fedora2vault.Command</main-class>
+        <main-class>nl.knaw.dans.easy.fedoratobag.Command</main-class>
         <easy.emd.version>3.9.2</easy.emd.version>
     </properties>
 
