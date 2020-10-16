@@ -67,7 +67,6 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
     // hence not reported in comment field of csvRecord
     val triedCsvRecord = for {
       csvRecord <- createBag(datasetId, depositDir / bagUUID, strict, filter)
-      _ <- DepositProperties.create(depositDir, csvRecord)
       _ = depositDir.moveTo(outputDir / sipUUID)(CopyOptions.atomically)
     } yield csvRecord
     errorHandling(triedCsvRecord, printer, datasetId, depositDir)
@@ -77,6 +76,7 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
     triedCsvRecord
       .doIfFailure {
         case t: InvalidTransformationException => logger.warn(s"$datasetId -> $ipDir failed: ${ t.getMessage }")
+        case t: Throwable => logger.error(s"$datasetId -> $ipDir had a not expected exception: ${ t.getMessage }", t)
       }
       .recoverWith {
         case t: FedoraClientException if t.getStatus != 404 => Failure(t)
@@ -108,7 +108,7 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
       amd <- getAmd(foXml)
       audiences <- emd.getEmdAudience.getDisciplines.asScala
         .map(id => getAudience(id.getValue)).collectResults
-      ddm <- DDM(emd, audiences)
+      ddm <- DDM(emd, audiences, configuration.abrTemporalMapping, configuration.abrTemporalMapping)
       fedoraIDs <- fedoraProvider.getSubordinates(datasetId)
       maybeFilterViolations <- filter.violations(emd, ddm, amd, fedoraIDs)
       _ = if (strict) maybeFilterViolations.foreach(msg => throw InvalidTransformationException(msg))

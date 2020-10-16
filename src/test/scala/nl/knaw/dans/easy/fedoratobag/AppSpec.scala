@@ -42,7 +42,7 @@ class AppSpec extends TestSupportFixture with BagIndexSupport with MockFactory w
 
   private class MockedLdapContext extends InitialLdapContext(new java.util.Hashtable[String, String](), null)
 
-  private class MockedApp(configuration: Configuration = null,
+  private class MockedApp(configuration: Configuration = new Configuration("test-version", null, null, null, null, abrTemporalMapping = <abr:periods/>, abrComplexMapping = <abr:complexlist/>),
                           mockedBagIndex: BagIndex = mockBagIndexRespondsWith(body = "<result/>", code = 200),
                          ) extends EasyFedoraToBagApp(configuration) {
     override lazy val fedoraProvider: FedoraProvider = mock[FedoraProvider]
@@ -79,7 +79,7 @@ class AppSpec extends TestSupportFixture with BagIndexSupport with MockFactory w
     val ids = Iterator("success:1", "notSimple:1", "whoops:1", "success:1")
     val outputDir = (testDir / "output").createDirectories()
     val stagingDir = testDir / "staging"
-    val app = new OverriddenApp(Configuration(null, null, null, null, stagingDir))
+    val app = new OverriddenApp(Configuration(null, null, null, null, stagingDir, null, null))
     val printer = CsvRecord.csvFormat.print(new StringWriter()) // content verified with simpleTransforms
     val triedMessage = app.createSips(ids, outputDir, strict = true, SimpleFilter())(printer)
     triedMessage shouldBe Success("no fedora/IO errors")
@@ -90,18 +90,7 @@ class AppSpec extends TestSupportFixture with BagIndexSupport with MockFactory w
 
     // two directories with two entries each
     outputDir.list.toList should have length 2
-    outputDir.listRecursively.toList should have length 6
-
-    // two deposits with almost the same deposit.properties
-    val props = outputDir.listRecursively.toList.filter(_.name == "deposit.properties")
-    props should have length 2
-    props.map(linesWithoutTimestamp).distinct shouldBe List(
-      """state.label = SUBMITTED
-        |state.description = Deposit is valid and ready for post-submission processing
-        |depositor.userId = testUser
-        |identifier.doi = testDOI
-        |identifier.fedora = success:1
-        |deposit.origin = easy-fedora-to-bag""".stripMargin)
+    outputDir.listRecursively.toList should have length 4
   }
 
   private def linesWithoutTimestamp(file: File) = {
@@ -188,6 +177,26 @@ class AppSpec extends TestSupportFixture with BagIndexSupport with MockFactory w
       Seq("amd.xml", "dataset.xml", "depositor-info", "emd.xml", "files.xml", "license.pdf", "original")
     (metadata / "depositor-info").list.toSeq.map(_.name).sortBy(identity) shouldBe
       Seq("agreements.xml", "depositor-agreement.pdf", "message-from-depositor.txt")
+  }
+
+  it should "reproduce (the now fixed) null pointer exception" in {
+    val app = new MockedApp()
+    implicit val fedoraProvider: FedoraProvider = app.fedoraProvider
+    expectedFoXmls(app.fedoraProvider, sampleFoXML / "easy-dataset-159876.xml")
+    expectedSubordinates(app.fedoraProvider)
+    expectedManagedStreams(app.fedoraProvider,
+      (testDir / "dataset-license").write("blablabla"),
+    )
+    expectedAudiences(Map(
+      "easy-discipline:9" -> "D13200a",
+      "easy-discipline:10" -> "D13200e",
+      "easy-discipline:20" -> "D13200b",
+      "easy-discipline:22" -> "D13200c",
+      "easy-discipline:209" -> "D13200d",
+    ))
+    // TODO isolate the culprit and move to DdmSpec
+    val bag = testDir / "bags" / UUID.randomUUID.toString
+    app.createBag("easy-dataset:159876", bag, strict = false, app.filter) shouldBe a[Success[_]]
   }
 
   it should "report strict simple violation" in {

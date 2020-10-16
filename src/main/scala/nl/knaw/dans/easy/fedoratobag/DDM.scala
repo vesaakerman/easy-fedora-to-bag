@@ -32,7 +32,7 @@ object DDM extends DebugEnhancedLogging {
   val dansLicense = "http://dans.knaw.nl/en/about/organisation-and-policy/legal-information/DANSLicence.pdf"
   val cc0 = "http://creativecommons.org/publicdomain/zero/1.0"
 
-  def apply(emd: EasyMetadataImpl, audiences: Seq[String]): Try[Elem] = Try {
+  def apply(emd: EasyMetadataImpl, audiences: Seq[String], abrTemporalMapping: Node, abrComplexMapping: Node): Try[Elem] = Try {
     //    println(new EmdMarshaller(emd).getXmlString)
 
     val dateMap: Map[String, Iterable[Elem]] = getDateMap(emd)
@@ -66,7 +66,7 @@ object DDM extends DebugEnhancedLogging {
        <ddm:accessRights>{ emd.getEmdRights.getAccessCategory }</ddm:accessRights>
      </ddm:profile>
      <ddm:dcmiMetadata>
-       { emd.getEmdIdentifier.getDcIdentifier.asScala.filter(_.getScheme != "DMO_ID").map(bi => <dct:identifier xsi:type={ idType(bi) }>{ bi.getValue.trim }</dct:identifier>) }
+       { emd.getEmdIdentifier.getDcIdentifier.asScala.map(bi => <dct:identifier xsi:type={ idType(bi) }>{ bi.getValue.trim }</dct:identifier>) }
        { emd.getEmdTitle.getTermsAlternative.asScala.map(str => <dct:alternative>{ str }</dct:alternative>) }
        { emd.getEmdDescription.getTermsAbstract.asScala.map(bs => <ddm:description xml:lang={ lang(bs) } descriptionType='Abstract'>{ bs.getValue.trim }</ddm:description>) }
        { emd.getEmdDescription.getTermsTableOfContents.asScala.map(bs => <ddm:description xml:lang={ lang(bs) } descriptionType='TableOfContents'>{ bs.getValue.trim }</ddm:description>) }
@@ -81,12 +81,12 @@ object DDM extends DebugEnhancedLogging {
        { emd.getEmdFormat.getDcFormat.asScala.map(bs => <dct:format>{ bs.getValue.trim }</dct:format>) }
        { emd.getEmdFormat.getTermsExtent.asScala.map(bs => <dct:extent>{ bs.getValue.trim }</dct:extent>) }
        { emd.getEmdFormat.getTermsMedium.asScala.map(bs => <dct:medium>{ bs.getValue.trim }</dct:medium>) }
-       { emd.getEmdSubject.getDcSubject.asScala.map(bs => <dct:subject xml:lang={ lang(bs) } xsi:type={ xsiType(bs) }>{ bs.getValue.trim }</dct:subject>) }
+       { emd.getEmdSubject.getDcSubject.asScala.map(toSubject(abrComplexMapping)) }
        { emd.getEmdCoverage.getDcCoverage.asScala.map(bs => <dct:coverage xml:lang={ lang(bs) }>{ bs.getValue.trim }</dct:coverage>) }
        { emd.getEmdCoverage.getTermsSpatial.asScala.map(bs => <dct:spatial xml:lang={ lang(bs) } xsi:type={ xsiType(bs) }>{ bs.getValue.trim }</dct:spatial>) }
-       { emd.getEmdCoverage.getTermsTemporal.asScala.map(bs => <dct:temporal xml:lang={ lang(bs) } xsi:type={ xsiType(bs) }>{ bs.getValue.trim }</dct:temporal>) }
+       { emd.getEmdCoverage.getTermsTemporal.asScala.map(toTemporal(abrTemporalMapping)) }
        { dateMap.filter(isOtherDate).map { case (key, values) => values.map(_.withLabel(dateLabel(key))) } }
-       { emd.getEmdCoverage.getEasSpatial.asScala.map(spatial => toXml(spatial))}
+       { emd.getEmdCoverage.getEasSpatial.asScala.map(toXml) }
        <dct:license xsi:type="dct:URI">{ toLicenseUrl(emd.getEmdRights) }</dct:license>
        { emd.getEmdLanguage.getDcLanguage.asScala.map(bs => <dct:language xsi:type={langType(bs)}>{ langValue(bs) }</dct:language>) }
      </ddm:dcmiMetadata>
@@ -105,13 +105,59 @@ object DDM extends DebugEnhancedLogging {
     case s => s
   }
 
+  private def toSubject(abrComplexMapping: Node)(bs: BasicString) = {
+    val maybe = if (isABR(bs, "archaeology.*subject")) {
+      // TODO optimize: create a map when loading the xsl
+      (abrComplexMapping \ "complex").theSeq
+        .find(node => (node \ "code").text == bs.getValue)
+        .map(node =>
+          <ddm:subject xml:lang="nl"
+                        valueURI={ (node \ "uri").text.trim }
+                        subjectScheme="Archeologisch Basis Register"
+                        schemeURI="http://www.rnaproject.org"
+          >{ s"${(node \ "label").text.trim } (${ bs.getValue })" }</ddm:subject>
+        )
+    } else None
+    maybe.getOrElse(
+      <dct:subject xml:lang={lang(bs)} xsi:type={xsiType(bs)}>{bs.getValue.trim}</dct:subject>
+    )
+  }
+
+  private def toTemporal(abrPeriodMapping: Node)(bs: BasicString): Elem = {
+    val maybe = if (isABR(bs, "archaeology.*temporal")) {
+      // TODO optimize: create a map when loading the xsl
+      (abrPeriodMapping \ "period").theSeq
+        .find(node => (node \ "code").text == bs.getValue)
+        .map(node =>
+          <ddm:temporal xml:lang="en"
+                          valueURI={ (node \ "uri").text.trim }
+                          subjectScheme="Archeologisch Basis Register"
+                          schemeURI="http://www.rnaproject.org"
+          >{ s"${(node \ "name").text.trim } (${ bs.getValue })" }</ddm:temporal>
+      )
+    } else None
+    maybe.getOrElse(
+      <dct:temporal xml:lang={ lang(bs) } xsi:type={ xsiType(bs) }>{ bs.getValue.trim }</dct:temporal>
+    )
+  }
+
+  private def isABR(bs: BasicString, s: DatasetId) = {
+    bs.getScheme == "ABR" && bs.getSchemeId.matches(s)
+  }
+
   private def xsiType(bs: BasicString): String = {
     val scheme = Option(bs.getScheme).map(_.toUpperCase())
     (scheme, Option(bs.getSchemeId)) match {
       case (Some("ABR"), Some("archaeology.dc.subject")) => "abr:ABRcomplex"
+      case (Some("ABR"), Some("archaeology.dct.subject")) => "abr:ABRcomplex"
+      case (Some("ABR"), Some("archaeology.dcterms.subject")) => "abr:ABRcomplex"
       case (Some("ABR"), Some("archaeology.dc.temporal")) => "abr:ABRperiode"
+      case (Some("ABR"), Some("archaeology.dct.temporal")) => "abr:ABRperiode"
+      case (Some("ABR"), Some("archaeology.dcterms.temporal")) => "abr:ABRperiode"
       case (Some("ABR"), _) => notImplementedAttribute("ABR schemeId")(bs)
       case (Some("DCMI"), Some("common.dc.type")) => "dct:DCMIType"
+      case (Some("DCMI"), Some("common.dct.type")) => "dct:DCMIType"
+      case (Some("DCMI"), Some("common.dcterms.type")) => "dct:DCMIType"
       case (Some("DCMI"), _) => notImplementedAttribute("DCMI schemeId")(bs)
       case (_, Some(scheme)) if scheme.startsWith("id-type:") => scheme
       case (None, None) => null
@@ -137,6 +183,7 @@ object DDM extends DebugEnhancedLogging {
     "Archis_monument" -> "ARCHIS-MONUMENT",
     "NWO-projectnummer" -> "NWO-PROJECTNR",
   )
+
   private def idType(bs: BasicString): DatasetId = Option(bs.getScheme)
     .filterNot(_.trim.isEmpty)
     .flatMap(schemeToIdType.get)
@@ -285,9 +332,9 @@ object DDM extends DebugEnhancedLogging {
 
   private def toRelationXml(key: String, rel: Relation): Elem = {
     <label scheme={ relationType(rel) }
-           href={ rel.getSubjectLink.toURL.toString }
-           xml:lang={ rel.getSubjectTitle.getLanguage }
-    >{ rel.getSubjectTitle.getValue.trim }</label>
+           href={ Option(rel.getSubjectLink).map(_.toURL.toString).orNull }
+           xml:lang={ Option(rel.getSubjectTitle).map(_.getLanguage).orNull }
+    >{ Option(rel.getSubjectTitle).map(_.getValue.trim).getOrElse("") }</label>
   }.withLabel(relationLabel("ddm:", key))
 
   private def toRelationXml(key: String, bs: BasicString): Node = {
@@ -301,11 +348,11 @@ object DDM extends DebugEnhancedLogging {
   }
 
   private def relationType(rel: Relation): String = {
-    rel.getSubjectLink.getAuthority match {
+    Option(rel.getSubjectLink).map(_.getAuthority match {
       case "persistent-identifier.nl" => "id-type:URN"
       case "doi.org" => "id-type:DOI"
       case _ => null
-    }
+    }).orNull
   }
 
   private def relationLabel(prefix: String, key: String): String = prefix + {

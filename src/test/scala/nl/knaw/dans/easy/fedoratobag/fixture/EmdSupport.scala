@@ -15,16 +15,20 @@
  */
 package nl.knaw.dans.easy.fedoratobag.fixture
 
+import better.files.File
+import nl.knaw.dans.easy.fedoratobag.Configuration.abrMapping
 import nl.knaw.dans.easy.fedoratobag._
+import nl.knaw.dans.lib.error._
 import nl.knaw.dans.pf.language.emd.EasyMetadataImpl
 import nl.knaw.dans.pf.language.emd.binding.EmdUnmarshaller
 import org.scalatest.Assertions._
 
 import scala.util.Try
-import scala.xml.{ Elem, NodeSeq }
-import nl.knaw.dans.lib.error._
+import scala.xml.{Elem, NodeSeq}
+
 trait EmdSupport {
   private val emdUnmarshaller = new EmdUnmarshaller(classOf[EasyMetadataImpl])
+  val (abrTemporalMapping, abrComplexMapping) = abrMapping(File("src/main/assembly/dist/cfg/EMD_acdm.xsl"))
 
   def parseEmdContent(xml: NodeSeq): EasyMetadataImpl = {
     val emd = <emd:easymetadata xmlns:emd="http://easy.dans.knaw.nl/easy/easymetadata/"
@@ -37,6 +41,8 @@ trait EmdSupport {
       .getOrRecover(e => fail("could not load test EMD", e))
   }
 
-  def emd2ddm(emd: EasyMetadataImpl): Elem = DDM(emd, Seq.empty)
-    .getOrRecover(e => fail("could not create DDM from test EMD", e))
+  def emd2ddm(emd: EasyMetadataImpl): Elem = {
+    DDM(emd, Seq.empty, abrTemporalMapping, abrComplexMapping)
+      .getOrRecover(e => fail("could not create DDM from test EMD", e))
+  }
 }

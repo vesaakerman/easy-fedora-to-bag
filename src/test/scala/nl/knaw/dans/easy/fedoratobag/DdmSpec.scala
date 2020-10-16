@@ -77,7 +77,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
 
   "streaming" should "get a valid DDM out of its EMD" in {
     val file = "streaming.xml"
-    val triedDdm = getEmd(file).flatMap(DDM(_, Seq("D35400")))
+    val triedDdm = getEmd(file).flatMap(DDM(_, Seq("D35400"), abrTemporalMapping, abrComplexMapping))
     // Logs
     //  INFO  skipped dct:relation STREAMING_SURROGATE_RELATION /domain/dans/user/utest/collection/ctest/presentation/private_continuous
     val expectedDdm = (File("src/test/resources/expected-ddm/") / file)
@@ -92,13 +92,13 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
 
   "depositApi" should "produce the DDM provided by easy-deposit-api" in {
     val triedFoXml = Try(XML.loadFile((sampleFoXML / "DepositApi.xml").toJava))
-    val triedDdm = getEmd("DepositApi.xml").flatMap(DDM(_, Seq("D13200")))
+    val triedDdm = getEmd("DepositApi.xml").flatMap(DDM(_, Seq("D13200"), abrTemporalMapping, abrComplexMapping))
     triedDdm shouldBe a[Success[_]]
 
     // round trip test: create DDM from EMD
     // * easy-deposit-api created DDM + EMD
     // * easy-ingest-flow copied both into foXml and extended EMD, not DDM
-    triedDdm.map(normalized(_).split("\n").filterNot(_.contains("URN")).mkString("\n")
+    triedDdm.map(normalized(_).split("\n").filterNot(_.contains("URN")).filterNot(_.contains("EASY2")).mkString("\n")
     ) shouldBe triedFoXml.map(foXml =>
       normalized((foXml \\ "DDM").head)
         // just another prefix for the namespace
@@ -123,7 +123,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
       emdDates,
       emdRights,
     ))
-    val triedDDM = DDM(emd, Seq("D35400"))
+    val triedDDM = DDM(emd, Seq("D35400"), abrTemporalMapping, abrComplexMapping)
     triedDDM.map(normalized) shouldBe Success(normalized(
       <ddm:DDM xsi:schemaLocation={ schemaLocation }>
         <ddm:profile>
@@ -184,7 +184,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
         </emd:relation>,
       emdRights,
     ))
-    val triedDDM = DDM(emd, Seq("D35400"))
+    val triedDDM = DDM(emd, Seq("D35400"), abrTemporalMapping, abrComplexMapping)
     // logs INFO  skipped dct:relation STREAMING_SURROGATE_RELATION /domain/dans/user/utest/collection/ctest/presentation/private_continuous
     triedDDM.map(normalized) shouldBe Success(normalized(
       <ddm:DDM xsi:schemaLocation={ schemaLocation }>
@@ -227,7 +227,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
       </emd:identifier>,
       emdRights,
     ))
-    val triedDDM = DDM(emd, Seq("D35400"))
+    val triedDDM = DDM(emd, Seq("D35400"), abrTemporalMapping, abrComplexMapping)
     triedDDM.map(normalized) shouldBe Success(normalized(
       <ddm:DDM xsi:schemaLocation={ schemaLocation }>
         { ddmProfile("D35400") }
@@ -256,7 +256,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
       </emd:creator>,
       emdDescription, emdDates, emdRights,
     ))
-    val triedDDM = DDM(emd, Seq("D35400"))
+    val triedDDM = DDM(emd, Seq("D35400"), abrTemporalMapping, abrComplexMapping)
     triedDDM.map(normalized) shouldBe Success(normalized(
       <ddm:DDM xsi:schemaLocation={ schemaLocation }>
         <ddm:profile>
@@ -295,7 +295,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
             <dct:license eas:scheme="Easy2 version 1">accept</dct:license>
         </emd:rights>
     ))
-    val triedDDM = DDM(emd, Seq("D35400"))
+    val triedDDM = DDM(emd, Seq("D35400"), abrTemporalMapping, abrComplexMapping)
     triedDDM.map(normalized) shouldBe Success(normalized(
       <ddm:DDM xsi:schemaLocation={ schemaLocation }>
         <ddm:profile>
@@ -325,7 +325,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
           <dct:accessRights eas:schemeId="common.dct.accessrights">OPEN_ACCESS</dct:accessRights>
       </emd:rights>
     ))
-    val triedDDM = DDM(emd, Seq("D35400"))
+    val triedDDM = DDM(emd, Seq("D35400"), abrTemporalMapping, abrComplexMapping)
     triedDDM.map(normalized) shouldBe Success(normalized(
       <ddm:DDM xsi:schemaLocation={ schemaLocation }>
         <ddm:profile>
@@ -354,7 +354,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
             <dct:license>accept</dct:license>
         </emd:rights>
     ))
-    val triedDDM = DDM(emd, Seq("D35400"))
+    val triedDDM = DDM(emd, Seq("D35400"), abrTemporalMapping, abrComplexMapping)
     triedDDM.map(normalized) shouldBe Success(normalized(
       <ddm:DDM xsi:schemaLocation={ schemaLocation }>
         <ddm:profile>
@@ -387,7 +387,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
         </emd:coverage>,
       emdRights,
     ))
-    val triedDDM = DDM(emd, Seq("D35400"))
+    val triedDDM = DDM(emd, Seq("D35400"), abrTemporalMapping, abrComplexMapping)
     // logs ERROR not implemented invalid point [SpatialPoint(Some(RD),None,None)]
     triedDDM.map(normalized) shouldBe Success(normalized(
       <ddm:DDM xsi:schemaLocation={ schemaLocation }>
@@ -420,7 +420,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
       emdRights,
     ))
     // logs ERROR not implemented invalid point [SpatialPoint(Some(RD),None,None)]
-    val triedDDM = DDM(emd, Seq("D35400"))
+    val triedDDM = DDM(emd, Seq("D35400"), abrTemporalMapping, abrComplexMapping)
     triedDDM.map(normalized) shouldBe Success(normalized(
       <ddm:DDM xsi:schemaLocation={ schemaLocation }>
         { ddmProfile("D35400") }
@@ -492,7 +492,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
         </emd:coverage>,
       emdRights,
     ))
-    val triedDDM = DDM(emd, Seq("D35400"))
+    val triedDDM = DDM(emd, Seq("D35400"), abrTemporalMapping, abrComplexMapping)
     triedDDM.map(normalized(_).replace("<posList></posList>", "<posList/>")) shouldBe Success(normalized(
       <ddm:DDM xsi:schemaLocation={ schemaLocation }>
         { ddmProfile("D35400") }
@@ -563,7 +563,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
         </emd:coverage>,
       emdRights,
     ))
-    val triedDDM = DDM(emd, Seq("D35400"))
+    val triedDDM = DDM(emd, Seq("D35400"), abrTemporalMapping, abrComplexMapping)
     // logs
     //  ERROR not implemented invalid box [SpatialBox(Some(RD),None,None,None,None)]
     //  ERROR not implemented invalid box [SpatialBox(Some(degrees),None,None,None,None)]
@@ -631,7 +631,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
     //  ERROR not implemented expected either point, box or polygon [scheme=null x=1 y=nullscheme=degrees north=79.5 east=23.0 south=76.7 west=10.0]
     //  ERROR not implemented expected either point, box or polygon [scheme=degrees north=79.5 east=23.0 south=76.7 west=10.0(exterior=null, interior=null) ]
     //  ERROR not implemented expected either point, box or polygon [scheme=null x=1 y=null(exterior=null, interior=null) ]
-    val triedDDM = DDM(emd, Seq("D35400"))
+    val triedDDM = DDM(emd, Seq("D35400"), abrTemporalMapping, abrComplexMapping)
     triedDDM.map(normalized) shouldBe Success(normalized(
       <ddm:DDM xsi:schemaLocation={ schemaLocation }>
         { ddmProfile("D35400") }
@@ -672,7 +672,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
     //  ERROR not implemented  [subject 0]
     //  ERROR not implemented  [subject 1]
     //  ERROR not implemented  [subject z
-    val triedDDM = DDM(emd, Seq("D35400"))
+    val triedDDM = DDM(emd, Seq("D35400"), abrTemporalMapping, abrComplexMapping)
     triedDDM.map(normalized) shouldBe Success(normalized(
       <ddm:DDM xsi:schemaLocation={ schemaLocation }>
         { ddmProfile("D35400") }
@@ -710,14 +710,14 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
       </emd:format>,
       emdRights,
     ))
-    val triedDDM = DDM(emd, Seq("D13200"))
+    val triedDDM = DDM(emd, Seq("D35400"), abrTemporalMapping, abrComplexMapping)
     // logs (but bag will get validated)
     //  ERROR not implemented  [subject 0]
     //  ERROR not implemented  [subject 1]
     //  ERROR not implemented  [subject zero]
     triedDDM.map(normalized) shouldBe Success(normalized(
       <ddm:DDM xsi:schemaLocation={ schemaLocation }>
-        { ddmProfile("D13200") }
+        { ddmProfile("D35400") }
         <ddm:dcmiMetadata>
           <dct:format>format0</dct:format>
           <dct:format>format1</dct:format>
@@ -725,7 +725,11 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
           <dct:extent>extent1</dct:extent>
           <dct:medium>medium0</dct:medium>
           <dct:medium>medium1</dct:medium>
-          <dct:subject xsi:type="abr:ABRcomplex">DEPO</dct:subject>
+          <ddm:subject  xml:lang="nl"
+                        valueURI="http://www.rnaproject.org/data/b97ef902-059a-4c14-b925-273c74bace30"
+                        subjectScheme="Archeologisch Basis Register"
+                        schemeURI="http://www.rnaproject.org"
+          >Depot (DEPO)</ddm:subject>
           <dct:subject>hello world</dct:subject>
           <dct:subject xml:lang="nld-NLD" xsi:type="-">subject 0</dct:subject>
           <dct:subject xml:lang="nld-NLD" xsi:type="-">subject 1</dct:subject>
@@ -746,11 +750,11 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
       </emd:subject>,
       emdDescription, emdDates, emdRights,
     ))
-    val triedDDM = DDM(emd, Seq("D13200"))
+    val triedDDM = DDM(emd, Seq("D35400"), abrTemporalMapping, abrComplexMapping)
     // logs ERROR not implemented ABR schemeId [DEPO]
     triedDDM.map(normalized) shouldBe Success(normalized(
       <ddm:DDM xsi:schemaLocation={ schemaLocation }>
-        { ddmProfile("D13200") }
+        { ddmProfile("D35400") }
         <ddm:dcmiMetadata>
           <dct:subject xsi:type="-">DEPO</dct:subject>
           <dct:license xsi:type="dct:URI">{ DDM.cc0 }</dct:license>
@@ -759,6 +763,65 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
     ))
     assume(schemaIsAvailable)
     triedDDM.flatMap(validate) should failWithNotImplementedAttribute
+  }
+
+  it should "map ABR" in {
+    val emd = parseEmdContent(Seq(
+      emdTitle, emdCreator,
+        <emd:subject>
+          <dc:subject eas:scheme="ABR" eas:schemeId="archaeology.dc.subject">NX</dc:subject>
+        </emd:subject>,
+      emdDescription, emdDates,
+      emdRights,
+    ))
+    val triedDDM = DDM(emd, Seq("D35400"), abrTemporalMapping, abrComplexMapping)
+    triedDDM.map(normalized) shouldBe Success(normalized(
+      <ddm:DDM xsi:schemaLocation={ schemaLocation }>
+        { ddmProfile("D35400") }
+        <ddm:dcmiMetadata>
+          <ddm:subject xml:lang="nl"
+                       valueURI="http://www.rnaproject.org/data/85ae2aa0-caae-4745-aecb-6cc765a8782f"
+                       subjectScheme="Archeologisch Basis Register"
+                       schemeURI="http://www.rnaproject.org"
+          >Nederzetting, onbepaald (NX)</ddm:subject>
+          <dct:license xsi:type="dct:URI">{ DDM.cc0 }</dct:license>
+        </ddm:dcmiMetadata>
+      </ddm:DDM>
+    ))
+    assume(schemaIsAvailable)
+    triedDDM.flatMap(validate) shouldBe Success(())
+  }
+
+  "temporal coverage" should "map ABR" in {
+    val emd = parseEmdContent(Seq(
+      emdTitle, emdCreator, emdDescription, emdDates,
+        <emd:coverage>
+          <dct:temporal eas:scheme="ABR" eas:schemeId="archaeology.dct.temporal">ROM</dct:temporal>
+          <dct:temporal eas:scheme="ABR" eas:schemeId="archaeology.dct.temporal">XME</dct:temporal>
+        </emd:coverage>,
+      emdRights,
+    ))
+    val triedDDM = DDM(emd, Seq("D35400"), abrTemporalMapping, abrComplexMapping)
+    triedDDM.map(normalized) shouldBe Success(normalized(
+      <ddm:DDM xsi:schemaLocation={ schemaLocation }>
+        { ddmProfile("D35400") }
+        <ddm:dcmiMetadata>
+          <ddm:temporal xml:lang="en"
+                        valueURI="http://www.rnaproject.org/data/000c6eeb-83ac-47d5-b18f-c9e5d5f08b69"
+                        subjectScheme="Archeologisch Basis Register"
+                        schemeURI="http://www.rnaproject.org"
+          >Roman period (ROM)</ddm:temporal>
+          <ddm:temporal xml:lang="en"
+                        valueURI="http://www.rnaproject.org/data/9deee0d5-bf7f-48ab-9d17-c42f30fdfcce"
+                        subjectScheme="Archeologisch Basis Register"
+                        schemeURI="http://www.rnaproject.org"
+          >Middle Ages (XME)</ddm:temporal>
+          <dct:license xsi:type="dct:URI">{ DDM.cc0 }</dct:license>
+        </ddm:dcmiMetadata>
+      </ddm:DDM>
+    ))
+    assume(schemaIsAvailable)
+    triedDDM.flatMap(validate) shouldBe Success(())
   }
 
   "author" should "succeed" in {
@@ -790,7 +853,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
         </emd:creator>,
       emdDescription, emdDates, emdRights,
     ))
-    val triedDDM = DDM(emd, Seq("D35400"))
+    val triedDDM = DDM(emd, Seq("D35400"), abrTemporalMapping, abrComplexMapping)
     triedDDM.map(normalized) shouldBe Success(normalized(
       <ddm:DDM xsi:schemaLocation={ schemaLocation }>
         <ddm:profile>
@@ -848,7 +911,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
           </emd:date>,
       emdRights,
     ))
-    val triedDDM = DDM(emd, Seq.empty)
+    val triedDDM = DDM(emd, Seq("D35400"), abrTemporalMapping, abrComplexMapping)
     triedDDM.map(normalized) shouldBe Success(normalized(
       <ddm:DDM xsi:schemaLocation={ schemaLocation }>
         <ddm:profile>
@@ -857,6 +920,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
           { ddmCreator }
           <ddm:created>03-2013</ddm:created>
           <ddm:available>03-2013</ddm:available>
+          <ddm:audience>D35400</ddm:audience>
           <ddm:accessRights>OPEN_ACCESS</ddm:accessRights>
         </ddm:profile>
         <ddm:dcmiMetadata>
@@ -882,7 +946,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
           </emd:date>,
       emdRights,
     ))
-    val triedDDM = DDM(emd, Seq.empty)
+    val triedDDM = DDM(emd, Seq("D35400"), abrTemporalMapping, abrComplexMapping)
     triedDDM.map(normalized) shouldBe Success(normalized(
       <ddm:DDM xsi:schemaLocation={ schemaLocation }>
         <ddm:profile>
@@ -893,6 +957,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
           <ddm:created>2017-09-30</ddm:created>
           <ddm:created>1901-04</ddm:created>
           <ddm:available>2013-04</ddm:available>
+          <ddm:audience>D35400</ddm:audience>
           <ddm:accessRights>OPEN_ACCESS</ddm:accessRights>
         </ddm:profile>
         <ddm:dcmiMetadata>
@@ -919,7 +984,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
           </emd:date>,
       emdRights,
     ))
-    val triedDDM = DDM(emd, Seq.empty)
+    val triedDDM = DDM(emd, Seq("D35400"), abrTemporalMapping, abrComplexMapping)
     triedDDM.map(normalized) shouldBe Success(normalized(
       <ddm:DDM xsi:schemaLocation={ schemaLocation }>
         <ddm:profile>
@@ -930,6 +995,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
           <ddm:available>2013-04</ddm:available>
           <ddm:available>2017-09-30</ddm:available>
           <ddm:available>1901-04</ddm:available>
+          <ddm:audience>D35400</ddm:audience>
           <ddm:accessRights>OPEN_ACCESS</ddm:accessRights>
         </ddm:profile>
         <ddm:dcmiMetadata>
@@ -971,7 +1037,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
           </emd:date>,
       emdRights,
     ))
-    val triedDDM = DDM(emd, Seq("D35400"))
+    val triedDDM = DDM(emd, Seq("D35400"), abrTemporalMapping, abrComplexMapping)
     triedDDM.map(normalized) shouldBe Success(normalized(
       <ddm:DDM xsi:schemaLocation={ schemaLocation }>
         <ddm:profile>
