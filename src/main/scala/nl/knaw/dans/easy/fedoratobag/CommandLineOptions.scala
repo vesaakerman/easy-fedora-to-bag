@@ -69,7 +69,6 @@ class CommandLineOptions(args: Array[String], configuration: Configuration) exte
   val transformation: ScallopOption[TransformationType] = trailArg(name = "transformation",
     descr = TransformationType.values.mkString("The type of transformation used: ", ", ", "."))
 
-
   validatePathExists(inputPath)
   validatePathIsFile(inputPath)
 
@@ -80,7 +79,10 @@ class CommandLineOptions(args: Array[String], configuration: Configuration) exte
            else if (!dir.isWriteable) Left(s"outputDir $dir exists and is empty but is not writeable by the current user")
                 else Right(())
     }
-    else Right(())
+    else {
+      dir.createDirectories()
+      Right(())
+    }
   })
 
   footer("")
