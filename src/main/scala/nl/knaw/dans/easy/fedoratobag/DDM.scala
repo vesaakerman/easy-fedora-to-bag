@@ -15,6 +15,8 @@
  */
 package nl.knaw.dans.easy.fedoratobag
 
+import java.net.URI
+
 import nl.knaw.dans.common.lang.dataset.AccessCategory._
 import nl.knaw.dans.lib.logging.DebugEnhancedLogging
 import nl.knaw.dans.lib.string._
@@ -299,12 +301,27 @@ object DDM extends DebugEnhancedLogging {
       .mapValues(_.flatMap(_._2))
   }
 
-  private def toRelationXml(key: String, rel: Relation): Elem = {
-    <label scheme={ relationType(rel) }
-           href={ Option(rel.getSubjectLink).map(_.toURL.toString).orNull }
-           xml:lang={ Option(rel.getSubjectTitle).map(_.getLanguage).orNull }
-    >{ Option(rel.getSubjectTitle).map(_.getValue.trim).getOrElse("") }</label>
-  }.withLabel(relationLabel("ddm:", key))
+  private def toRelationXml(key: String, rel: Relation): Elem = Try {
+    {
+      <label scheme={ relationType(rel) }
+             href={ Option(rel.getSubjectLink).map(toHref).orNull }
+             xml:lang={ Option(rel.getSubjectTitle).map(_.getLanguage).orNull }
+      >{ Option(rel.getSubjectTitle).map(_.getValue.trim).getOrElse("") }</label>
+    }.withLabel(relationLabel("ddm:", key))
+  }.getOrElse(notImplemented(s"relation ($key)")(rel))
+
+  private def toHref(uri: URI) = {
+    Option(uri.getScheme).map {
+      case "urn" => "https://persistent-identifier.nl/" + uri
+      case "doi" => "https://doi.org/" + uri.getSchemeSpecificPart
+      case "http" | "https" => uri.toString
+      case _ => ??? // recover with Try{...}.getOrElse of caller to fail slow
+    }.getOrElse {
+      if (uri.toString.startsWith("10.17026/")) s"https://doi.org/$uri"
+      else if (uri.toString.isBlank) null
+           else ???
+    }
+  }
 
   private def toRelationXml(key: String, bs: BasicString): Node = {
     if (bs.getScheme == "STREAMING_SURROGATE_RELATION") {
@@ -321,7 +338,7 @@ object DDM extends DebugEnhancedLogging {
       case "persistent-identifier.nl" => "id-type:URN"
       case "doi.org" => "id-type:DOI"
       case _ => null
-    }).orNull
+    }).orNull // omits the attribute
   }
 
   private def relationLabel(prefix: String, key: String): String = prefix + {
