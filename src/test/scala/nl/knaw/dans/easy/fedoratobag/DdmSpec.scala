@@ -411,6 +411,38 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
     triedDDM.flatMap(validate) shouldBe Success(())
   }
 
+  it should "should ignore empty place element" in {
+    val emd = parseEmdContent(Seq(
+      emdTitle, emdCreator, emdDescription, emdDates,
+      <emd:coverage>
+         <eas:spatial>
+            <eas:place></eas:place>
+            <eas:point eas:scheme="RD">
+                <eas:x>187267</eas:x>
+                <eas:y>433455</eas:y>
+            </eas:point>
+         </eas:spatial>
+      </emd:coverage>,
+      emdRights,
+    ))
+    val triedDDM = DDM(emd, Seq("D35400"), abrMapping)
+    // logs ERROR not implemented invalid point [SpatialPoint(Some(RD),None,None)]
+    triedDDM.map(normalized) shouldBe Success(normalized(
+      <ddm:DDM xsi:schemaLocation={ schemaLocation }>
+        { ddmProfile("D35400") }
+        <ddm:dcmiMetadata>
+           <dcx-gml:spatial srsName="http://www.opengis.net/def/crs/EPSG/0/28992">
+             <Point xmlns="http://www.opengis.net/gml"><pos>187267 433455</pos></Point>
+           </dcx-gml:spatial>
+          <dct:license xsi:type="dct:URI">{ DDM.cc0 }</dct:license>
+        </ddm:dcmiMetadata>
+      </ddm:DDM>
+      )
+    ) // note that a missing x or y defaults to zero
+    assume(schemaIsAvailable)
+    triedDDM.flatMap(validate) shouldBe Success(())
+  }
+
   it should "report a point without coordinates as not implemented" in {
     val emd = parseEmdContent(Seq(
       emdTitle, emdCreator, emdDescription, emdDates,

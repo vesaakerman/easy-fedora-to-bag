@@ -216,6 +216,7 @@ object DDM extends DebugEnhancedLogging {
           { toXml(polygons.asScala) }
         </dcx-gml:spatial>
       case (None, Some(_), None, None) => toXmlPoint(spatial.getPoint)
+      case (Some(_), Some(_), None, None) => toXmlPoint(spatial.getPoint)
       case (None, None, Some(_), None) => toXml(spatial.getBox)
       case _ => notImplemented("expected either point, box or polygon")(spatial)
     }
