@@ -33,6 +33,7 @@ trait Filter extends DebugEnhancedLogging {
     val triedMaybeVaultResponse: Try[Option[String]] = maybeDoi
       .map(targetIndex.getByDoi)
       .getOrElse(Success(None)) // no DOI => no bag found by DOI
+    if (maybeDoi.isDefined && triedMaybeVaultResponse.get.isEmpty) logger.info(s"doi ${maybeDoi.get} not found in bag-index")
     val violations = Seq(
       "1: DANS DOI" -> (if (maybeDoi.isEmpty) Seq("not found")
                         else Seq[String]()),
