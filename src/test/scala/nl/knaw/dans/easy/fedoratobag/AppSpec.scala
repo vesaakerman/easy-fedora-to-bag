@@ -51,13 +51,13 @@ class AppSpec extends TestSupportFixture with BagIndexSupport with MockFactory w
     val filter: SimpleFilter = SimpleFilter(bagIndex)
 
     // make almost private method available for tests
-    override def createBag(datasetId: DatasetId, bagDir: File, strict: Boolean, filter: Filter): Try[CsvRecord] =
-      super.createBag(datasetId, bagDir, strict, filter)
+    override def createBag(datasetId: DatasetId, bagDir: File, strict: Boolean, europeana: Boolean, filter: Filter): Try[CsvRecord] =
+      super.createBag(datasetId, bagDir, strict, europeana, filter)
   }
 
   private class OverriddenApp(configuration: Configuration = null) extends MockedApp(configuration) {
     /** overrides the method called by the method under test */
-    override def createBag(datasetId: DatasetId, outputDir: File, strict: Boolean, filter: Filter): Try[CsvRecord] = {
+    override def createBag(datasetId: DatasetId, outputDir: File, strict: Boolean, europeana: Boolean, filter: Filter): Try[CsvRecord] = {
       outputDir.parent.createDirectories()
       datasetId match {
         case _ if datasetId.startsWith("fatal") =>
@@ -81,7 +81,7 @@ class AppSpec extends TestSupportFixture with BagIndexSupport with MockFactory w
     val stagingDir = testDir / "staging"
     val app = new OverriddenApp(Configuration(null, null, null, null, stagingDir, null))
     val printer = CsvRecord.csvFormat.print(new StringWriter()) // content verified with simpleTransforms
-    val triedMessage = app.createSips(ids, outputDir, strict = true, SimpleFilter())(printer)
+    val triedMessage = app.createSips(ids, outputDir, strict = true, europeana = false, SimpleFilter())(printer)
     triedMessage shouldBe Success("no fedora/IO errors")
 
     // two directories with one entry each
@@ -93,16 +93,13 @@ class AppSpec extends TestSupportFixture with BagIndexSupport with MockFactory w
     outputDir.listRecursively.toList should have length 4
   }
 
-  private def linesWithoutTimestamp(file: File) = {
-    file.contentAsString.split("\n").filterNot(_.contains("timestamp")).mkString("\n")
-  }
-
   "createAips" should "report success" in {
     val ids = Iterator("success:1", "success:2")
     val outputDir = (testDir / "output").createDirectories()
     val sw = new StringWriter()
-    val app = new OverriddenApp()
-    app.createAips(ids, outputDir, strict = true, app.filter)(CsvRecord.csvFormat.print(sw)) shouldBe Success("no fedora/IO errors")
+    val stagingDir = testDir / "staging"
+    val app = new OverriddenApp(Configuration(null, null, null, null, stagingDir, null))
+    app.createAips(ids, outputDir, strict = true, europeana = false, app.filter)(CsvRecord.csvFormat.print(sw)) shouldBe Success("no fedora/IO errors")
     sw.toString should (fullyMatch regex
       """easyDatasetId,uuid,doi,depositor,transformationType,comment
         |success:1,.*,testDOI,testUser,simple,OK
@@ -116,8 +113,9 @@ class AppSpec extends TestSupportFixture with BagIndexSupport with MockFactory w
     val ids = Iterator("success:1", "failure:2", "notSimple:3", "success:4", "fatal:5", "success:6")
     val outputDir = (testDir / "output").createDirectories()
     val sw = new StringWriter()
-    val app = new OverriddenApp()
-    app.createAips(ids, outputDir, strict = true, app.filter)(CsvRecord.csvFormat.print(sw)) should matchPattern {
+    val stagingDir = testDir / "staging"
+    val app = new OverriddenApp(Configuration(null, null, null, null, stagingDir, null))
+    app.createAips(ids, outputDir, strict = true, europeana = false, app.filter)(CsvRecord.csvFormat.print(sw)) should matchPattern {
       case Failure(t) if t.getMessage == "mocked exception" =>
     }
     sw.toString should (fullyMatch regex
@@ -128,22 +126,24 @@ class AppSpec extends TestSupportFixture with BagIndexSupport with MockFactory w
         |success:4,.*,testDOI,testUser,simple,OK
         |""".stripMargin
       )
-    outputDir.list.toSeq should have length 4
+    outputDir.list.toSeq should have length 2
+    stagingDir.list.toSeq should have length 2
   }
 
   "createBag" should "process DepositApi" in {
     val app = new MockedApp()
     implicit val fedoraProvider: FedoraProvider = app.fedoraProvider
     expectedAudiences(Map("easy-discipline:77" -> "D13200"))
-    expectedSubordinates(app.fedoraProvider)
-    expectedFoXmls(app.fedoraProvider, sampleFoXML / "DepositApi.xml")
+    expectedFoXmls(app.fedoraProvider, sampleFoXML / "DepositApi.xml",  sampleFoXML / "easy-file-35.xml")
     expectedManagedStreams(app.fedoraProvider,
       (testDir / "additional-license").write("lalala"),
       (testDir / "dataset-license").write("blablabla"),
+      mockContentOfFile35,
     )
+    expectedSubordinates(app.fedoraProvider, "easy-file:35")
 
     val uuid = UUID.randomUUID
-    app.createBag("easy-dataset:17", testDir / "bags" / uuid.toString, strict = true, app.filter) shouldBe
+    app.createBag("easy-dataset:17", testDir / "bags" / uuid.toString, strict = true, europeana = false, app.filter) shouldBe
       Success(CsvRecord("easy-dataset:17", uuid, "10.17026/test-Iiib-z9p-4ywa", "user001", "simple", "OK"))
 
     val metadata = (testDir / "bags").children.next() / "metadata"
@@ -167,14 +167,14 @@ class AppSpec extends TestSupportFixture with BagIndexSupport with MockFactory w
     )
 
     val uuid = UUID.randomUUID
-    app.createBag("easy-dataset:17", testDir / "bags" / uuid.toString, strict = false, app.filter) shouldBe
-      Success(CsvRecord("easy-dataset:17", uuid, "10.17026/test-Iiib-z9p-4ywa", "user001", "not strict simple", "Violates 2: has jump off"))
+    app.createBag("easy-dataset:17", testDir / "bags" / uuid.toString, strict = false, europeana = false, app.filter) shouldBe
+      Failure(NoPayloadFilesException())
 
     val metadata = (testDir / "bags").children.next() / "metadata"
     (metadata / "depositor-info/depositor-agreement.pdf").contentAsString shouldBe "blablabla"
     (metadata / "license.pdf").contentAsString shouldBe "lalala"
     metadata.list.toSeq.map(_.name).sortBy(identity) shouldBe
-      Seq("amd.xml", "dataset.xml", "depositor-info", "emd.xml", "files.xml", "license.pdf", "original")
+      Seq("amd.xml", "dataset.xml", "depositor-info", "emd.xml", "license.pdf", "original")
     (metadata / "depositor-info").list.toSeq.map(_.name).sortBy(identity) shouldBe
       Seq("agreements.xml", "depositor-agreement.pdf", "message-from-depositor.txt")
   }
@@ -187,7 +187,7 @@ class AppSpec extends TestSupportFixture with BagIndexSupport with MockFactory w
     expectedFoXmls(app.fedoraProvider, sampleFoXML / "DepositApi.xml")
 
     val uuid = UUID.randomUUID
-    app.createBag("easy-dataset:17", testDir / "bags" / uuid.toString, strict = true, app.filter) should matchPattern {
+    app.createBag("easy-dataset:17", testDir / "bags" / uuid.toString, strict = true, europeana = false, app.filter) should matchPattern {
       case Failure(_: InvalidTransformationException) =>
     }
 
@@ -206,7 +206,7 @@ class AppSpec extends TestSupportFixture with BagIndexSupport with MockFactory w
     expectedManagedStreams(app.fedoraProvider, mockContentOfFile35)
 
     val uuid = UUID.randomUUID
-    app.createBag("easy-dataset:13", testDir / "bags" / uuid.toString, strict = true, app.filter) shouldBe
+    app.createBag("easy-dataset:13", testDir / "bags" / uuid.toString, strict = true, europeana = false, app.filter) shouldBe
       Success(CsvRecord("easy-dataset:13", uuid, "10.17026/mocked-Iiib-z9p-4ywa", "user001", "simple", "OK"))
 
     val metadata = (testDir / "bags").children.next() / "metadata"
@@ -239,9 +239,8 @@ class AppSpec extends TestSupportFixture with BagIndexSupport with MockFactory w
       ),
     )
     expectedSubordinates(app.fedoraProvider, "easy-file:35")
-    expectedManagedStreams(app.fedoraProvider, mockContentOfFile35)
 
-    app.createBag("easy-dataset:13", testDir / "bags" / UUID.randomUUID.toString, strict = true, app.filter) should matchPattern {
+    app.createBag("easy-dataset:13", testDir / "bags" / UUID.randomUUID.toString, strict = true, europeana = false, app.filter) should matchPattern {
       case Failure(e) if e.getMessage == "easy-file:35 <visibleTo> not found" =>
     }
   }

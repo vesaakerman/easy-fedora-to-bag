@@ -21,6 +21,7 @@ ARGUMENTS
 
      -d, --datasetId  <arg>       A single easy-dataset-id to be transformed. Use either this or the input-file
                                   argument
+     -e, --europeana              If provided, only the largest pdf/image will selected as payload.
      -i, --input-file  <arg>      File containing a newline-separated list of easy-dataset-ids to be transformed.
                                   Use either this or the dataset-id argument
      -l, --log-file  <arg>        The name of the logfile in csv format. If not provided a file

@@ -53,11 +53,11 @@ object Command extends App with DebugEnhancedLogging {
 
     (commandLine.transformation(), commandLine.outputFormat()) match {
       case (SIMPLE, SIP) =>
-        printer.apply(app.createSips(ids, outputDir, strict, SimpleFilter()))
+        printer.apply(app.createSips(ids, outputDir, strict, commandLine.europeana(), SimpleFilter()))
       case (SIMPLE, AIP) =>
-        printer.apply(app.createAips(ids, outputDir, strict, SimpleFilter(app.bagIndex)))
+        printer.apply(app.createAips(ids, outputDir, strict, commandLine.europeana(), SimpleFilter(app.bagIndex)))
       case (THEMA, AIP) =>
-        printer.apply(app.createAips(ids, outputDir, strict, ThemaFilter(app.bagIndex)))
+        printer.apply(app.createAips(ids, outputDir, strict, commandLine.europeana(), ThemaFilter(app.bagIndex)))
       case tuple =>
         Failure(new NotImplementedError(s"$tuple not implemented"))
     }

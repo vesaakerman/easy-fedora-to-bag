@@ -66,6 +66,8 @@ class CommandLineOptions(args: Array[String], configuration: Configuration) exte
   val logFile: ScallopOption[File] = logFilePath.map(File(_))
   val strictMode: ScallopOption[Boolean] = opt(name = "strict", short = 's',
     descr = "If provided, the transformation will check whether the datasets adhere to the requirements of the chosen transformation.")
+  val europeana: ScallopOption[Boolean] = opt(name = "europeana", short = 'e',
+    descr = "If provided, only the largest pdf/image will selected as payload.")
   val transformation: ScallopOption[TransformationType] = trailArg(name = "transformation",
     descr = TransformationType.values.mkString("The type of transformation used: ", ", ", "."))
 
