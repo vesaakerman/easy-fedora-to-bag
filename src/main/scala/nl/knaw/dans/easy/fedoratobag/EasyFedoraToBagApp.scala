@@ -29,7 +29,7 @@ import javax.naming.ldap.InitialLdapContext
 import nl.knaw.dans.bag.ChecksumAlgorithm
 import nl.knaw.dans.bag.v0.DansV0Bag
 import nl.knaw.dans.easy.fedoratobag.Command.FeedBackMessage
-import nl.knaw.dans.easy.fedoratobag.FileFilterType.FileFilterType
+import nl.knaw.dans.easy.fedoratobag.FileFilterType.{ LARGEST_IMAGE, _ }
 import nl.knaw.dans.easy.fedoratobag.FileItem.{ checkNotImplemented, filesXml }
 import nl.knaw.dans.easy.fedoratobag.FoXml.{ getEmd, _ }
 import nl.knaw.dans.easy.fedoratobag.OutputFormat.OutputFormat
@@ -53,14 +53,8 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
   private lazy val ldap = new Ldap(ldapContext)
   private val emdUnmarshaller = new EmdUnmarshaller(classOf[EasyMetadataImpl])
 
-  def createAips(input: Iterator[DatasetId], outputDir: File, strict: Boolean, europeana: Boolean, filter: Filter)
-                (printer: CSVPrinter): Try[FeedBackMessage] = createExport(input, outputDir, strict, europeana, filter, OutputFormat.AIP)(printer)
-
-  def createSips(input: Iterator[DatasetId], outputDir: File, strict: Boolean, europeana: Boolean, filter: Filter)
-                (printer: CSVPrinter): Try[FeedBackMessage] = createExport(input, outputDir, strict, europeana, filter, OutputFormat.SIP)(printer)
-
-  def createExport(input: Iterator[DatasetId], outputDir: File, strict: Boolean, europeana: Boolean, filter: Filter, outputFormat: OutputFormat)
-                (printer: CSVPrinter): Try[FeedBackMessage] = input.map { datasetId =>
+  def createExport(input: Iterator[DatasetId], outputDir: File, strict: Boolean, europeana: Boolean, filter: DatasetFilter, outputFormat: OutputFormat)
+                  (printer: CSVPrinter): Try[FeedBackMessage] = input.map { datasetId =>
     val bagUuid = UUID.randomUUID.toString
     val sipUuid = UUID.randomUUID.toString
     val sipDir = configuration.stagingDir / sipUuid
@@ -97,7 +91,7 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
       }.doIfSuccess(_.print(printer))
   }
 
-  protected[EasyFedoraToBagApp] def createBag(datasetId: DatasetId, bagDir: File, strict: Boolean, europeana: Boolean, filter: Filter): Try[CsvRecord] = {
+  protected[EasyFedoraToBagApp] def createBag(datasetId: DatasetId, bagDir: File, strict: Boolean, europeana: Boolean, datasetFilter: DatasetFilter): Try[CsvRecord] = {
 
     def managedMetadataStream(foXml: Elem, streamId: String, bag: DansV0Bag, metadataFile: String) = {
       managedStreamLabel(foXml, streamId)
@@ -120,7 +114,7 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
         .map(id => getAudience(id.getValue)).collectResults
       ddm <- DDM(emd, audiences, configuration.abrMapping)
       fedoraIDs <- fedoraProvider.getSubordinates(datasetId)
-      maybeFilterViolations <- filter.violations(emd, ddm, amd, fedoraIDs)
+      maybeFilterViolations <- datasetFilter.violations(emd, ddm, amd, fedoraIDs)
       _ = if (strict) maybeFilterViolations.foreach(msg => throw InvalidTransformationException(msg))
       _ = logger.info(s"Creating $bagDir from $datasetId with owner $depositor")
       bag <- DansV0Bag.empty(bagDir)
@@ -145,7 +139,7 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
         .getOrElse(Success(()))
       _ <- managedMetadataStream(foXml, "DATASET_LICENSE", bag, "depositor-info/depositor-agreement")
         .getOrElse(Success(()))
-      fileFilterType = getFileFilterType(europeana, emdXml)
+      fileFilterType = FileFilterType.from(europeana, emdXml)
       fileItems <- addPayloads(bag, fileFilterType, fedoraIDs.filter(_.startsWith("easy-file:")))
       _ <- checkNotImplemented(fileItems, logger)
       _ <- addXmlMetadataTo(bag, "files.xml")(filesXml(fileItems))
@@ -159,19 +153,6 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
       transformationType = maybeFilterViolations.map(_ => "not strict simple").getOrElse(SIMPLE.toString),
       maybeFilterViolations.getOrElse("OK"),
     )
-  }
-
-  private def isDCMI(node: Node) = node
-    .attribute("http://easy.dans.knaw.nl/easy/easymetadata/eas/", "scheme")
-    .exists(_.text == "DCMI")
-
-  private def getFileFilterType(europeana: Boolean, emd: Node): FileFilterType = {
-    if (!europeana) FileFilterType.ALL
-    else {
-      val dcmiType = (emd \ "type" \ "type").filter(isDCMI)
-      if (dcmiType.text.toLowerCase.trim == "text") FileFilterType.PDF
-      else FileFilterType.IMAGE
-    }
   }
 
   private def getAudience(id: String) = {
@@ -192,54 +173,60 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
     bag.addTagFile(content.serialize.inputStream, Paths.get(s"metadata/depositor-info/agreements.xml"))
   }
 
-  private def addPayloads(bag: DansV0Bag, fileFilterType: FileFilterType, fileIds: Seq[String]) = {
-    fileIds.toList.traverse(getFileInfo)
-      .flatMap {
-        fileInfos =>
-          val selected = fileFilterType match {
-            case FileFilterType.ALL => fileInfos
-            case t @ _ => selectFileByType(t, fileInfos)
-          }
-          if (selected.nonEmpty) selected.traverse(addPayloadFileTo(bag))
-          else Failure(NoPayloadFilesException())
-      }
+  protected[EasyFedoraToBagApp] def addPayloads(bag: DansV0Bag, fileFilterType: FileFilterType, fileIds: Seq[String]): Try[List[Node]] = {
+    for {
+      allFileInfos <- fileIds.toList.traverse(getFileInfo)
+      filteredFileInfos <- selectFileInfos(fileFilterType, allFileInfos)
+      fileItems <- filteredFileInfos.traverse(addPayloadFileTo(bag))
+    } yield fileItems
   }
 
-  private def selectFileByType(fileFilterType: FileFilterType, fileInfos: List[FileInfo]): List[FileInfo] = {
-    val openAccessFileInfos = fileInfos.filter(_.accessibleTo == "ANONYMOUS")
-    val selected = openAccessFileInfos.filter(_.mimeType.startsWith(
-      fileFilterType match {
-        case FileFilterType.PDF => "application/pdf"
-        case FileFilterType.IMAGE => "image/"
-      }))
-    val reversedSelection = openAccessFileInfos.filter(_.mimeType.startsWith(
-      fileFilterType match {
-        case FileFilterType.PDF => "image/" // Sic!
-        case FileFilterType.IMAGE => "application/pdf" // Sic!
-      }))
-    if (selected.nonEmpty) List(selected.maxBy(_.size))
-    else if (reversedSelection.nonEmpty) List(reversedSelection.maxBy(_.size))
-         else if (openAccessFileInfos.nonEmpty) List(openAccessFileInfos.maxBy(_.size))
-              else List.empty[FileInfo]
+  private def selectFileInfos(fileFilterType: FileFilterType, fileInfos: List[FileInfo]): Try[List[FileInfo]] = {
+    def largest(by: FileFilterType, orElseBy: FileFilterType): Try[List[FileInfo]] = {
+      val infosByType = fileInfos
+        .filter(_.accessibleTo == "ANONYMOUS")
+        .groupBy(fi => if (fi.mimeType.startsWith("image/")) LARGEST_IMAGE
+                       else if (fi.mimeType.startsWith("application/pdf")) LARGEST_PDF
+                            else ALL_FILES
+        )
+      val selected = infosByType.getOrElse(by, infosByType.getOrElse(orElseBy, List.empty))
+      maxSizeUnlessEmpty(selected)
+    }
+
+    def maxSizeUnlessEmpty(selected: List[FileInfo]) = {
+      if (selected.isEmpty) Failure(NoPayloadFilesException())
+      else Success(List(selected.maxBy(_.size)))
+    }
+
+    def successUnlessEmpty(fileInfos: List[FileInfo]) = {
+      if (fileInfos.isEmpty) Failure(NoPayloadFilesException())
+      else Success(fileInfos)
+    }
+
+    def inOriginal(info: FileInfo) = info.path.startsWith("original/")
+
+    fileFilterType match {
+      case LARGEST_PDF => largest(LARGEST_PDF, LARGEST_IMAGE)
+      case LARGEST_IMAGE => largest(LARGEST_IMAGE, LARGEST_PDF)
+      case ORIGINAL_FILES => successUnlessEmpty(fileInfos.filter(inOriginal))
+      case ALL_BUT_ORIGINAL => successUnlessEmpty(fileInfos.filterNot(inOriginal))
+      case ALL_FILES => successUnlessEmpty(fileInfos)
+    }
   }
 
   private def getFileInfo(fedoraFileId: String): Try[FileInfo] = {
-    for {
-      foXml <- fedoraProvider.loadFoXml(fedoraFileId)
-      fileMD <- FoXml.getFileMD(foXml)
-      path <- Try { Paths.get((fileMD \\ "path").text) }
-      sizeString <- Try { (fileMD \\ "size").text }
-      mimeType <- Try { (fileMD \\ "mimeType").text }
-      accessibleTo <- Try { (fileMD \\ "accessibleTo").text }
-      optContentDigest = FoXml.getStreamRoot("EASY_FILE", foXml).map(_ \\ "contentDigest").flatMap(_.headOption)
-
-    } yield FileInfo(fedoraFileId, path, sizeString.toLong, mimeType, accessibleTo, optContentDigest, foXml)
+    fedoraProvider
+      .loadFoXml(fedoraFileId)
+      .flatMap(FileInfo(_))
+      .recoverWith {
+        case t: Throwable => Failure(new Exception(s"$fedoraFileId ${ t.getMessage }"))
+      }
   }
 
   private def addPayloadFileTo(bag: DansV0Bag)(fileInfo: FileInfo): Try[Node] = {
     val streamId = "EASY_FILE"
     for {
-      fileItem <- FileItem(fileInfo.foXml)
+      fileItem <- FileItem(fileInfo)
       _ <- fedoraProvider
         .disseminateDatastream(fileInfo.fedoraFileId, streamId)
         .map(bag.addPayloadFile(_, fileInfo.path))

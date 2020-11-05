@@ -17,20 +17,29 @@ package nl.knaw.dans.easy.fedoratobag
 
 import nl.knaw.dans.pf.language.emd.EasyMetadata
 
-import scala.collection.JavaConverters._
+import scala.xml.{ Elem, Node }
 
 object FileFilterType extends Enumeration {
   type FileFilterType = Value
 
   // @formatter:off
-  val PDF: FileFilterType = Value("PDF")
-  val IMAGE: FileFilterType = Value("IMAGE")
-  val ALL: FileFilterType = Value("ALL")
+  val LARGEST_PDF: FileFilterType = Value("LARGEST_PDF")
+  val LARGEST_IMAGE: FileFilterType = Value("LARGEST_IMAGE")
+  val ALL_FILES: FileFilterType = Value("ALL_FILES")
+  val ORIGINAL_FILES: FileFilterType = Value("ORIGINAL_FILES")
+  val ALL_BUT_ORIGINAL: FileFilterType = Value("ALL_BUT_ORIGINAL")
   // @formatter:on
 
-  def from(europeana: Boolean, emd: EasyMetadata): FileFilterType = {
-    if (!europeana) FileFilterType.ALL
-    else null
-  }
+  private def isDCMI(node: Node) = node
+    .attribute("http://easy.dans.knaw.nl/easy/easymetadata/eas/", "scheme")
+    .exists(_.text == "DCMI")
 
+  def from(europeana: Boolean, emd: Node): FileFilterType = {
+    if (!europeana) ALL_FILES
+    else {
+      val dcmiType = (emd \ "type" \ "type").filter(isDCMI)
+      if (dcmiType.text.toLowerCase.trim == "text") LARGEST_PDF
+      else LARGEST_IMAGE
+    }
+  }
 }
