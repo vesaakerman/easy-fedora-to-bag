@@ -16,13 +16,12 @@
 package nl.knaw.dans.easy.fedoratobag
 
 import java.io.StringWriter
-import java.util.UUID
 
 import better.files.File
 import com.yourmediashelf.fedora.client.FedoraClientException
 import javax.naming.ldap.InitialLdapContext
 import nl.knaw.dans.easy.fedoratobag.OutputFormat.{ AIP, SIP }
-import nl.knaw.dans.easy.fedoratobag.filter.{ BagIndex, DatasetFilter, InvalidTransformationException, SimpleDatasetFilter }
+import nl.knaw.dans.easy.fedoratobag.filter.{ BagIndex, InvalidTransformationException, SimpleDatasetFilter }
 import nl.knaw.dans.easy.fedoratobag.fixture._
 import org.scalamock.scalatest.MockFactory
 
@@ -47,7 +46,7 @@ class CreateExportSpec extends TestSupportFixture with FileFoXmlSupport with Bag
     val filter: SimpleDatasetFilter = SimpleDatasetFilter(bagIndex)
 
     /** mocks the method called by the method under test */
-    override def createBag(datasetId: DatasetId, outputDir: File, strict: Boolean, europeana: Boolean, datasetFilter: DatasetFilter): Try[CsvRecord] = {
+    override def createFirstBag(datasetId: DatasetId, outputDir: File, options: Options): Try[DatasetInfo] = {
       outputDir.parent.createDirectories()
       datasetId match {
         case _ if datasetId.startsWith("fatal") =>
@@ -60,7 +59,7 @@ class CreateExportSpec extends TestSupportFixture with FileFoXmlSupport with Bag
           Failure(new Exception(datasetId))
         case _ =>
           outputDir.createFile().writeText(datasetId)
-          Success(CsvRecord(datasetId, UUID.randomUUID(), doi = "testDOI", depositor = "testUser", transformationType = "simple", comment = "OK"))
+          Success(DatasetInfo(None, doi = "testDOI", depositor = "testUser", Seq.empty))
       }
     }
   }
@@ -69,11 +68,11 @@ class CreateExportSpec extends TestSupportFixture with FileFoXmlSupport with Bag
     val ids = Iterator("success:1", "notSimple:1", "whoops:1", "success:1")
     val outputDir = (testDir / "output").createDirectories()
     val app = new OverriddenApp()
-    val printer = CsvRecord.csvFormat.print(new StringWriter()) // content verified with simpleTransforms
+    val sw = new StringWriter()
 
     // end of mocking
 
-    app.createExport(ids, outputDir, strict = true, europeana = false, SimpleDatasetFilter(), SIP)(printer) shouldBe
+    app.createExport(ids, outputDir, Options(SimpleDatasetFilter()), SIP)(CsvRecord.csvFormat.print(sw)) shouldBe
       Success("no fedora/IO errors")
 
     // two directories with one entry each
@@ -83,6 +82,11 @@ class CreateExportSpec extends TestSupportFixture with FileFoXmlSupport with Bag
     // two directories with two entries each
     outputDir.list.toList should have length 2
     outputDir.listRecursively.toList should have length 4
+
+    val csvContent = sw.toString // rest of the content tested with createAips
+    outputDir.list.toSeq.map(_.name).foreach(packageId =>
+      csvContent should include(packageId)
+    )
   }
 
   "createAips" should "report success" in {
@@ -93,17 +97,21 @@ class CreateExportSpec extends TestSupportFixture with FileFoXmlSupport with Bag
 
     // end of mocking
 
-    app.createExport(ids, outputDir, strict = true, europeana = false, app.filter, AIP)(CsvRecord.csvFormat.print(sw)) shouldBe Success("no fedora/IO errors")
+    app.createExport(ids, outputDir, Options(app.filter), AIP)(CsvRecord.csvFormat.print(sw)) shouldBe Success("no fedora/IO errors")
 
     // post conditions
 
-    sw.toString should (fullyMatch regex
-      """easyDatasetId,uuid,doi,depositor,transformationType,comment
+    val csvContent = sw.toString
+    csvContent should (fullyMatch regex
+      """easyDatasetId,uuid1,uuid2,doi,depositor,transformationType,comment
         |success:1,.*,testDOI,testUser,simple,OK
         |success:2,.*,testDOI,testUser,simple,OK
         |""".stripMargin
       )
     outputDir.listRecursively.toSeq should have length 2
+    outputDir.list.toSeq.map(_.name).foreach(packageId =>
+      csvContent should include(packageId)
+    )
   }
 
   it should "report failure" in {
@@ -114,14 +122,15 @@ class CreateExportSpec extends TestSupportFixture with FileFoXmlSupport with Bag
 
     // end of mocking
 
-    app.createExport(ids, outputDir, strict = true, europeana = false, app.filter, AIP)(CsvRecord.csvFormat.print(sw)) should matchPattern {
+    app.createExport(ids, outputDir, Options(app.filter), AIP)(CsvRecord.csvFormat.print(sw)) should matchPattern {
       case Failure(t) if t.getMessage == "mocked exception" =>
     }
 
     // post conditions
 
-    sw.toString should (fullyMatch regex
-      """easyDatasetId,uuid,doi,depositor,transformationType,comment
+    val csvContent = sw.toString
+    csvContent should (fullyMatch regex
+      """easyDatasetId,uuid1,uuid2,doi,depositor,transformationType,comment
         |success:1,.*,testDOI,testUser,simple,OK
         |failure:2,.*,,,simple,FAILED: java.lang.Exception: failure:2
         |notSimple:3,.*,,,simple,FAILED: .*InvalidTransformationException: mocked
@@ -130,5 +139,11 @@ class CreateExportSpec extends TestSupportFixture with FileFoXmlSupport with Bag
       )
     outputDir.list.toSeq should have length 2
     stagingDir.list.toSeq should have length 2
+    outputDir.list.toSeq.map(_.name).foreach(packageId =>
+      csvContent should include(packageId)
+    )
+    stagingDir.list.toSeq.map(_.name).foreach(packageId =>
+      csvContent should include(packageId)
+    )
   }
 }

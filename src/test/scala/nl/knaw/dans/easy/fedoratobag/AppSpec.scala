@@ -15,21 +15,21 @@
  */
 package nl.knaw.dans.easy.fedoratobag
 
+import java.io.StringWriter
 import java.util.UUID
 
 import better.files.{ File, _ }
 import javax.naming.NamingEnumeration
 import javax.naming.directory.{ BasicAttributes, SearchControls, SearchResult }
 import javax.naming.ldap.InitialLdapContext
-import nl.knaw.dans.bag.v0.DansV0Bag
-import nl.knaw.dans.easy.fedoratobag.FileFilterType._
-import nl.knaw.dans.easy.fedoratobag.filter.{ BagIndex, DatasetFilter, InvalidTransformationException, SimpleDatasetFilter }
+import nl.knaw.dans.easy.fedoratobag.OutputFormat.SIP
+import nl.knaw.dans.easy.fedoratobag.filter.{ BagIndex, InvalidTransformationException, SimpleDatasetFilter }
 import nl.knaw.dans.easy.fedoratobag.fixture._
 import org.scalamock.scalatest.MockFactory
 import resource.managed
 
 import scala.util.{ Failure, Success, Try }
-import scala.xml.{ Node, XML }
+import scala.xml.XML
 
 class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupport with MockFactory with FileSystemSupport with AudienceSupport {
   implicit val logFile: File = testDir / "log.txt"
@@ -42,82 +42,128 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
 
   private class MockedLdapContext extends InitialLdapContext(new java.util.Hashtable[String, String](), null)
 
-  private class MockedApp(configuration: Configuration = new Configuration("test-version", null, null, null, null, AbrMappings(File("src/main/assembly/dist/cfg/EMD_acdm.xsl"))),
-                         ) extends EasyFedoraToBagApp(configuration) {
+  private class AppWithMockedServices(configuration: Configuration = new Configuration("test-version", null, null, null, testDir / "staging", AbrMappings(File("src/main/assembly/dist/cfg/EMD_acdm.xsl"))),
+                                     ) extends EasyFedoraToBagApp(configuration) {
     override lazy val fedoraProvider: FedoraProvider = mock[FedoraProvider]
     override lazy val ldapContext: InitialLdapContext = mock[MockedLdapContext]
     override lazy val bagIndex: BagIndex = mockBagIndexRespondsWith(body = "<result/>", code = 200)
     val filter: SimpleDatasetFilter = SimpleDatasetFilter(bagIndex)
 
+    def expectAUser(): Unit = {
+      val result = mock[NamingEnumeration[SearchResult]]
+      result.hasMoreElements _ expects() returning true
+      val attributes = new BasicAttributes {
+        put("displayname", "U.Ser")
+        put("mail", "does.not.exist@dans.knaw.nl")
+      }
+      result.nextElement _ expects() returning new SearchResult("", null, attributes)
+      (ldapContext.search(_: String, _: String, _: SearchControls)) expects(*, *, *) once() returning result
+    }
+
     // make almost private methods available for tests
 
-    override def createBag(datasetId: DatasetId, bagDir: File, strict: Boolean, europeana: Boolean, datasetFilter: DatasetFilter): Try[CsvRecord] =
-      super.createBag(datasetId, bagDir, strict, europeana, datasetFilter)
-
-    override def addPayloads(bag: DansV0Bag, fileFilterType: FileFilterType, fileIds: Seq[String]): Try[List[Node]] =
-      super.addPayloads(bag, fileFilterType, fileIds)
+    override def createFirstBag(datasetId: DatasetId, bagDir: File, options: Options): Try[DatasetInfo] =
+      super.createFirstBag(datasetId, bagDir, options)
   }
 
-  "createBag" should "process DepositApi" in {
-    val app = new MockedApp()
-    Map(
-      "easy-discipline:77" -> audienceFoXML("easy-discipline:77", "D13200"),
-      "easy-dataset:17" -> XML.loadFile((sampleFoXML / "DepositApi.xml").toJava),
-      "easy-file:35" -> fileFoXml(),
-    ).foreach { case (id, xml) =>
-      (app.fedoraProvider.loadFoXml(_: String)) expects id once() returning Success(xml)
+  "createExport" should "produce two bags" in {
+    val app = new AppWithMockedServices() {
+      Map(
+        "easy-discipline:77" -> audienceFoXML("easy-discipline:77", "D13200"),
+        "easy-dataset:17" -> XML.loadFile((sampleFoXML / "DepositApi.xml").toJava),
+        "easy-file:35" -> fileFoXml(digest = digests("acabadabra")),
+        "easy-file:36" -> fileFoXml(id = 36, location = "x", accessibleTo = "ANONYMOUS", digest = digests("rabarbera")),
+        "easy-file:37" -> fileFoXml(id = 37, accessibleTo = "NONE", name = "b.txt", digest = digests("barbapappa")),
+      ).foreach { case (id, xml) =>
+        (fedoraProvider.loadFoXml(_: String)) expects id once() returning Success(xml)
+      }
+      Seq(
+        (1, "easy-dataset:17", "ADDITIONAL_LICENSE", "lalala"),
+        (1, "easy-dataset:17", "DATASET_LICENSE", "blablabla"),
+        (2, "easy-file:35", "EASY_FILE", "acabadabra"),
+        (1, "easy-file:36", "EASY_FILE", "rabarbera"),
+        (1, "easy-file:37", "EASY_FILE", "barbapappa"),
+      ).foreach { case (n, objectId, streamId, content) =>
+        (fedoraProvider.disseminateDatastream(_: String, _: String)) expects(objectId, streamId
+        ) returning managed(content.inputStream) repeat n
+      }
+      (fedoraProvider.getSubordinates(_: String)) expects "easy-dataset:17" once() returning
+        Success(Seq("easy-file:35", "easy-file:36", "easy-file:37"))
     }
-    Seq(
-      ("easy-dataset:17", "ADDITIONAL_LICENSE", "lalala"),
-      ("easy-dataset:17", "DATASET_LICENSE", "blablabla"),
-      ("easy-file:35", "EASY_FILE", "acabadabra"),
-    ).foreach { case (objectId, streamId, content) =>
-      (app.fedoraProvider.disseminateDatastream(_: String, _: String)) expects(objectId, streamId
-      ) once() returning managed(content.inputStream)
-    }
-    (app.fedoraProvider.getSubordinates(_: String)) expects "easy-dataset:17" once() returning
-      Success(Seq("easy-file:35"))
-
     // end of mocking
 
-    val uuid = UUID.randomUUID
-    app.createBag("easy-dataset:17", testDir / "bags" / uuid.toString, strict = true, europeana = false, app.filter) shouldBe
-      Success(CsvRecord("easy-dataset:17", uuid, "10.17026/test-Iiib-z9p-4ywa", "user001", "simple", "OK"))
-
-    // post conditions
-
-    val metadata = (testDir / "bags").children.next() / "metadata"
-    (metadata / "depositor-info/depositor-agreement.pdf").contentAsString shouldBe "blablabla"
-    (metadata / "license.pdf").contentAsString shouldBe "lalala"
-    metadata.list.toSeq.map(_.name).sortBy(identity) shouldBe
-      Seq("amd.xml", "dataset.xml", "depositor-info", "emd.xml", "files.xml", "license.pdf", "original")
-    (metadata / "depositor-info").list.toSeq.map(_.name).sortBy(identity) shouldBe
-      Seq("agreements.xml", "depositor-agreement.pdf", "message-from-depositor.txt")
+    val sw = new StringWriter()
+    app.createExport(
+      Iterator("easy-dataset:17"),
+      (testDir / "output").createDirectories,
+      Options(SimpleDatasetFilter(), originalVersioning = true),
+      SIP
+    )(CsvRecord.csvFormat.print(sw)) shouldBe Success("no fedora/IO errors")
+    sw.toString should fullyMatch regex
+      """easyDatasetId,uuid1,uuid2,doi,depositor,transformationType,comment
+        |easy-dataset:17,.*,10.17026/test-Iiib-z9p-4ywa,user001,simple,OK
+        |""".stripMargin
   }
 
-  it should "report not strict simple violation" in {
-    val app = new MockedApp()
-    (app.fedoraProvider.getSubordinates(_: String)) expects "easy-dataset:17" once() returning
-      Success(Seq("easy-jumpoff:1"))
-    Map(
-      "ADDITIONAL_LICENSE" -> "lalala",
-      "DATASET_LICENSE" -> "blablabla",
-    ).foreach { case (streamId, content) =>
-      (app.fedoraProvider.disseminateDatastream(_: String, _: String)) expects("easy-dataset:17", streamId
-      ) once() returning managed(content.inputStream)
+  it should "report a checksum mismatch" in {
+    val app = new AppWithMockedServices() {
+      Map(
+        "easy-discipline:77" -> audienceFoXML("easy-discipline:77", "D13200"),
+        "easy-dataset:17" -> XML.loadFile((sampleFoXML / "DepositApi.xml").toJava),
+        "easy-file:35" -> fileFoXml(digest = digests("barbapappa")),
+      ).foreach { case (id, xml) =>
+        (fedoraProvider.loadFoXml(_: String)) expects id once() returning Success(xml)
+      }
+      Seq(
+        ("easy-dataset:17", "ADDITIONAL_LICENSE", "lalala"),
+        ("easy-dataset:17", "DATASET_LICENSE", "blablabla"),
+        ("easy-file:35", "EASY_FILE", "acabadabra"),
+      ).foreach { case (objectId, streamId, content) =>
+        (fedoraProvider.disseminateDatastream(_: String, _: String)) expects(objectId, streamId
+        ) returning managed(content.inputStream) once()
+      }
+      (fedoraProvider.getSubordinates(_: String)) expects "easy-dataset:17" once() returning
+        Success(Seq("easy-file:35"))
     }
-    Map(
-      "easy-discipline:77" -> audienceFoXML("easy-discipline:77", "D13200"),
-      "easy-dataset:17" -> XML.loadFile((sampleFoXML / "DepositApi.xml").toJava),
-    ).foreach { case (id, xml) =>
-      (app.fedoraProvider.loadFoXml(_: String)) expects id once() returning Success(xml)
+    // end of mocking
+
+    val sw = new StringWriter()
+    app.createExport(
+      Iterator("easy-dataset:17"),
+      (testDir / "output").createDirectories,
+      Options(SimpleDatasetFilter()),
+      SIP
+    )(CsvRecord.csvFormat.print(sw)) shouldBe Success("no fedora/IO errors")
+    sw.toString should fullyMatch regex
+      """easyDatasetId,uuid1,uuid2,doi,depositor,transformationType,comment
+        |easy-dataset:17,.*,,,,simple,FAILED: java.lang.Exception: checksum error .* easy-file:35 .*/data/original/something.txt
+        |""".stripMargin
+  }
+
+  "createBag" should "report not strict simple violation" in {
+    val app = new AppWithMockedServices() {
+      (fedoraProvider.getSubordinates(_: String)) expects "easy-dataset:17" once() returning
+        Success(Seq("easy-jumpoff:1"))
+      Map(
+        "ADDITIONAL_LICENSE" -> "lalala",
+        "DATASET_LICENSE" -> "blablabla",
+      ).foreach { case (streamId, content) =>
+        (fedoraProvider.disseminateDatastream(_: String, _: String)) expects("easy-dataset:17", streamId
+        ) once() returning managed(content.inputStream)
+      }
+      Map(
+        "easy-discipline:77" -> audienceFoXML("easy-discipline:77", "D13200"),
+        "easy-dataset:17" -> XML.loadFile((sampleFoXML / "DepositApi.xml").toJava),
+      ).foreach { case (id, xml) =>
+        (fedoraProvider.loadFoXml(_: String)) expects id once() returning Success(xml)
+      }
     }
 
     // end of mocking
 
     val uuid = UUID.randomUUID
     val bagDir = testDir / "bags" / uuid.toString
-    app.createBag("easy-dataset:17", bagDir, strict = false, europeana = false, app.filter) shouldBe
+    app.createFirstBag("easy-dataset:17", bagDir, Options(app.filter, strict = false)) shouldBe
       Failure(NoPayloadFilesException())
 
     // post conditions
@@ -132,49 +178,50 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
   }
 
   it should "report strict simple violation" in {
-    val app = new MockedApp()
-    (app.fedoraProvider.getSubordinates(_: String)) expects "easy-dataset:17" once() returning
-      Success(Seq("easy-jumpoff:1"))
-    Map(
-      "easy-discipline:77" -> audienceFoXML("easy-discipline:77", "D13200"),
-      "easy-dataset:17" -> XML.loadFile((sampleFoXML / "DepositApi.xml").toJava),
-    ).foreach { case (id, xml) =>
-      (app.fedoraProvider.loadFoXml(_: String)) expects id once() returning Success(xml)
+    val app = new AppWithMockedServices() {
+      (fedoraProvider.getSubordinates(_: String)) expects "easy-dataset:17" once() returning
+        Success(Seq("easy-jumpoff:1"))
+      Map(
+        "easy-discipline:77" -> audienceFoXML("easy-discipline:77", "D13200"),
+        "easy-dataset:17" -> XML.loadFile((sampleFoXML / "DepositApi.xml").toJava),
+      ).foreach { case (id, xml) =>
+        (fedoraProvider.loadFoXml(_: String)) expects id once() returning Success(xml)
+      }
     }
 
     // end of mocking
 
     val uuid = UUID.randomUUID
     val bagDir = testDir / "bags" / uuid.toString
-    app.createBag("easy-dataset:17", bagDir, strict = true, europeana = false, app.filter) should matchPattern {
+    app.createFirstBag("easy-dataset:17", bagDir, Options(app.filter)) should matchPattern {
       case Failure(_: InvalidTransformationException) =>
     }
     (testDir / "bags") shouldNot exist
   }
 
   it should "process streaming" in {
-    val app = new MockedApp()
-    expectAUser(app.ldapContext)
-    Map(
-      "easy-discipline:6" -> audienceFoXML("easy-discipline:6", "D35400"),
-      "easy-dataset:13" -> XML.loadFile((sampleFoXML / "streaming.xml").toJava),
-      "easy-file:35" -> fileFoXml(),
-    ).foreach { case (id, xml) =>
-      (app.fedoraProvider.loadFoXml(_: String)) expects id once() returning Success(xml)
+    val app = new AppWithMockedServices() {
+      expectAUser()
+      Map(
+        "easy-discipline:6" -> audienceFoXML("easy-discipline:6", "D35400"),
+        "easy-dataset:13" -> XML.loadFile((sampleFoXML / "streaming.xml").toJava),
+        "easy-file:35" -> fileFoXml(digest = digests("barbapappa")),
+      ).foreach { case (id, xml) =>
+        (fedoraProvider.loadFoXml(_: String)) expects id once() returning Success(xml)
+      }
+      (fedoraProvider.disseminateDatastream(_: String, _: String)) expects(
+        "easy-file:35",
+        "EASY_FILE"
+      ) once() returning managed("barbapappa".inputStream)
+      (fedoraProvider.getSubordinates(_: String)) expects "easy-dataset:13" once() returning
+        Success(Seq("easy-file:35"))
     }
-    (app.fedoraProvider.disseminateDatastream(_: String, _: String)) expects(
-      "easy-file:35",
-      "EASY_FILE"
-    ) once() returning managed("barbapapa".inputStream)
-    (app.fedoraProvider.getSubordinates(_: String)) expects "easy-dataset:13" once() returning
-      Success(Seq("easy-file:35"))
-
     // end of mocking
 
     val uuid = UUID.randomUUID
     val bagDir = testDir / "bags" / uuid.toString
-    app.createBag("easy-dataset:13", bagDir, strict = true, europeana = false, app.filter) shouldBe
-      Success(CsvRecord("easy-dataset:13", uuid, "10.17026/mocked-Iiib-z9p-4ywa", "user001", "simple", "OK"))
+    app.createFirstBag("easy-dataset:13", bagDir, Options(app.filter)) shouldBe
+      Success(DatasetInfo(None, "10.17026/mocked-Iiib-z9p-4ywa", "user001", Seq.empty))
 
     // post conditions
 
@@ -200,146 +247,165 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
         .inputStream
     )
 
-    val app = new MockedApp()
-    expectAUser(app.ldapContext)
-    (app.fedoraProvider.getSubordinates(_: String)) expects "easy-dataset:13" once() returning
-      Success(Seq("easy-file:35"))
-    Map(
-      "easy-discipline:6" -> audienceFoXML("easy-discipline:6", "D35400"),
-      "easy-dataset:13" -> XML.loadFile((sampleFoXML / "streaming.xml").toJava),
-      "easy-file:35" -> invalidFileFoXml,
-    ).foreach { case (id, xml) =>
-      (app.fedoraProvider.loadFoXml(_: String)) expects id once() returning Success(xml)
+    val app = new AppWithMockedServices() {
+      expectAUser()
+      (fedoraProvider.getSubordinates(_: String)) expects "easy-dataset:13" once() returning
+        Success(Seq("easy-file:35"))
+      Map(
+        "easy-discipline:6" -> audienceFoXML("easy-discipline:6", "D35400"),
+        "easy-dataset:13" -> XML.loadFile((sampleFoXML / "streaming.xml").toJava),
+        "easy-file:35" -> invalidFileFoXml,
+      ).foreach { case (id, xml) =>
+        (fedoraProvider.loadFoXml(_: String)) expects id once() returning Success(xml)
+      }
     }
 
     // end of mocking
 
     val bagDir = testDir / "bags" / UUID.randomUUID.toString
-    app.createBag("easy-dataset:13", bagDir, strict = true, europeana = false, app.filter) should matchPattern {
+    app.createFirstBag("easy-dataset:13", bagDir, Options(app.filter)) should matchPattern {
       case Failure(e) if e.getMessage == "easy-file:35 <visibleTo> not found" =>
     }
   }
 
-  "addPayloads" should "export all files" in {
-    val app = new MockedApp()
-    val foXMLs = Map(
-      "easy-file:1" -> fileFoXml(id = 1, name = "a.txt"),
-      "easy-file:2" -> fileFoXml(id = 2, name = "b.txt"),
-      "easy-file:3" -> fileFoXml(id = 3, name = "c.txt"),
-    )
-    foXMLs.foreach { case (id, xml) =>
-      (app.fedoraProvider.loadFoXml(_: String)) expects id once() returning Success(xml)
-      (app.fedoraProvider.disseminateDatastream(_: String, _: String)
-        ) expects(id, "EASY_FILE") once() returning managed("blablabla".inputStream)
+  it should "export all files" in {
+    val app: AppWithMockedServices = new AppWithMockedServices() {
+      expectAUser()
+      (fedoraProvider.getSubordinates(_: String)) expects "easy-dataset:13" once() returning
+        Success(Seq("easy-file:1", "easy-file:2", "easy-file:3"))
+      val foXMLs = Map(
+        "easy-dataset:13" -> XML.loadFile((sampleFoXML / "streaming.xml").toJava),
+        "easy-discipline:6" -> audienceFoXML("easy-discipline:6", "D35400"),
+        "easy-file:1" -> fileFoXml(id = 1, name = "a.txt", digest = digests("lalala")),
+        "easy-file:2" -> fileFoXml(id = 2, name = "b.txt", digest = digests("lalala")),
+        "easy-file:3" -> fileFoXml(id = 3, name = "c.txt", digest = digests("lalala")),
+      )
+      foXMLs.foreach { case (id, xml) =>
+        (fedoraProvider.loadFoXml(_: String)) expects id once() returning Success(xml)
+      }
+      Seq("easy-file:1", "easy-file:2", "easy-file:3").foreach { id =>
+        (fedoraProvider.disseminateDatastream(_: String, _: String)
+          ) expects(id, "EASY_FILE") once() returning managed("lalala".inputStream)
+      }
     }
 
     // end of mocking
 
     val bagDir = testDir / "bags" / UUID.randomUUID.toString
-    app.addPayloads(emptyBag(bagDir), ALL_FILES, foXMLs.keys.toList) shouldBe a[Success[_]]
+    val triedRecord = app.createFirstBag("easy-dataset:13", bagDir, Options(app.filter))
+    triedRecord shouldBe a[Success[_]]
     (bagDir / "data").listRecursively.toList.map(_.name) should
       contain theSameElementsAs List("original", "c.txt", "b.txt", "a.txt")
   }
 
   it should "export largest image as payload" in {
-    val app = new MockedApp()
-    val foXMLs = Map(
-      "easy-file:1" -> fileFoXml(id = 1, name = "b.png", mimeType = "image/png", size = 10, accessibleTo = "ANONYMOUS"),
-      "easy-file:2" -> fileFoXml(id = 2, name = "c.png", mimeType = "image/png", size = 20, accessibleTo = "ANONYMOUS"),
-      "easy-file:3" -> fileFoXml(id = 3, name = "d.png", mimeType = "image/png", size = 15, accessibleTo = "ANONYMOUS"),
-      "easy-file:4" -> fileFoXml(id = 4, name = "e.pdf", mimeType = "application/pdf", size = 15),
-      "easy-file:5" -> fileFoXml(id = 5, name = "a.txt"),
-    )
-    foXMLs.foreach { case (id, xml) =>
-      (app.fedoraProvider.loadFoXml(_: String)) expects id once() returning Success(xml)
+    val app: AppWithMockedServices = new AppWithMockedServices() {
+      expectAUser()
+      (fedoraProvider.getSubordinates(_: String)) expects "easy-dataset:13" once() returning
+        Success(Seq("easy-file:1", "easy-file:2", "easy-file:3", "easy-file:4", "easy-file:5"))
+      val foXMLs = Map(
+        "easy-dataset:13" -> XML.loadFile((sampleFoXML / "streaming.xml").toJava),
+        "easy-discipline:6" -> audienceFoXML("easy-discipline:6", "D35400"),
+        "easy-file:1" -> fileFoXml(id = 1, name = "b.png", mimeType = "image/png", size = 10, accessibleTo = "ANONYMOUS", digest = digests("lalala")),
+        "easy-file:2" -> fileFoXml(id = 2, name = "c.png", mimeType = "image/png", size = 20, accessibleTo = "ANONYMOUS", digest = digests("lalala")),
+        "easy-file:3" -> fileFoXml(id = 3, name = "d.png", mimeType = "image/png", size = 15, accessibleTo = "ANONYMOUS", digest = digests("lalala")),
+        "easy-file:4" -> fileFoXml(id = 4, name = "e.pdf", mimeType = "application/pdf", size = 15, digest = digests("lalala")),
+        "easy-file:5" -> fileFoXml(id = 5, name = "a.txt", digest = digests("lalala")),
+      )
+      foXMLs.foreach { case (id, xml) =>
+        (fedoraProvider.loadFoXml(_: String)) expects id once() returning Success(xml)
+      }
+      (fedoraProvider.disseminateDatastream(_: String, _: String)
+        ) expects("easy-file:2", "EASY_FILE") once() returning managed("lalala".inputStream)
     }
-    (app.fedoraProvider.disseminateDatastream(_: String, _: String)
-      ) expects("easy-file:2", "EASY_FILE") once() returning managed("blablabla".inputStream)
-
     // end of mocking
 
     val bagDir = testDir / "bags" / UUID.randomUUID.toString
-    app.addPayloads(emptyBag(bagDir), LARGEST_IMAGE, foXMLs.keys.toList) shouldBe a[Success[_]]
+    app.createFirstBag("easy-dataset:13", bagDir, Options(app.filter, europeana = true)) shouldBe a[Success[_]]
     (bagDir / "data").listRecursively.toList.map(_.name) should
       contain theSameElementsAs List("original", "c.png")
   }
 
-  it should "fall back to pdf files" in {
-    val app = new MockedApp()
-    val foXMLs = Map(
-      "easy-file:1" -> fileFoXml(id = 1, name = "a.txt"),
-      "easy-file:2" -> fileFoXml(id = 2, name = "b.pdf", mimeType = "application/pdf", size = 10, accessibleTo = "ANONYMOUS"),
-      "easy-file:3" -> fileFoXml(id = 3, name = "c.pdf", mimeType = "application/pdf", size = 20, accessibleTo = "ANONYMOUS"),
-      "easy-file:4" -> fileFoXml(id = 4, name = "d.pdf", mimeType = "application/pdf", size = 15, accessibleTo = "ANONYMOUS"),
-      "easy-file:5" -> fileFoXml(id = 5, name = "e.png", mimeType = "image/png"),
-    )
-    foXMLs.foreach { case (id, xml) =>
-      (app.fedoraProvider.loadFoXml(_: String)) expects id once() returning Success(xml)
+  it should "fall back to largest pdf file" in {
+    val app: AppWithMockedServices = new AppWithMockedServices() {
+      expectAUser()
+      (fedoraProvider.getSubordinates(_: String)) expects "easy-dataset:13" once() returning
+        Success(Seq("easy-file:1", "easy-file:2", "easy-file:3", "easy-file:4", "easy-file:5"))
+      val foXMLs = Map(
+        "easy-dataset:13" -> XML.loadFile((sampleFoXML / "streaming.xml").toJava),
+        "easy-discipline:6" -> audienceFoXML("easy-discipline:6", "D35400"),
+        "easy-file:1" -> fileFoXml(id = 1, name = "a.txt"),
+        "easy-file:2" -> fileFoXml(id = 2, name = "b.pdf", mimeType = "application/pdf", size = 10, accessibleTo = "ANONYMOUS", digest = digests("lalala")),
+        "easy-file:3" -> fileFoXml(id = 3, name = "c.pdf", mimeType = "application/pdf", size = 20, accessibleTo = "ANONYMOUS", digest = digests("lalala")),
+        "easy-file:4" -> fileFoXml(id = 4, name = "d.pdf", mimeType = "application/pdf", size = 15, accessibleTo = "ANONYMOUS", digest = digests("lalala")),
+        "easy-file:5" -> fileFoXml(id = 5, name = "e.png", mimeType = "image/png"),
+      )
+      foXMLs.foreach { case (id, xml) =>
+        (fedoraProvider.loadFoXml(_: String)) expects id once() returning Success(xml)
+      }
+      (fedoraProvider.disseminateDatastream(_: String, _: String)
+        ) expects("easy-file:3", "EASY_FILE") once() returning managed("lalala".inputStream)
     }
-    (app.fedoraProvider.disseminateDatastream(_: String, _: String)
-      ) expects("easy-file:3", "EASY_FILE") once() returning managed("blablabla".inputStream)
-
     // end of mocking
 
     val bagDir = testDir / "bags" / UUID.randomUUID.toString
-    app.addPayloads(emptyBag(bagDir), LARGEST_IMAGE, foXMLs.keys.toList) shouldBe a[Success[_]]
+    app.createFirstBag("easy-dataset:13", bagDir, Options(app.filter, europeana = true)) shouldBe a[Success[_]]
     (bagDir / "data").listRecursively.toList.map(_.name) should
       contain theSameElementsAs List("original", "c.pdf")
   }
 
   it should "export only original files" in {
-    val app = new MockedApp()
-    val foXMLs = Map(
-      "easy-file:1" -> fileFoXml(id = 1, name = "a.txt", location = "x"), // default: original
-      "easy-file:2" -> fileFoXml(id = 2, name = "b.pdf", mimeType = "application/pdf", size = 10, accessibleTo = "ANONYMOUS"),
-      "easy-file:3" -> fileFoXml(id = 3, name = "c.pdf", mimeType = "application/pdf", size = 20, accessibleTo = "ANONYMOUS"),
-      "easy-file:4" -> fileFoXml(id = 4, name = "d.pdf", mimeType = "application/pdf", size = 15, accessibleTo = "ANONYMOUS"),
-      "easy-file:5" -> fileFoXml(id = 5, name = "e.png", mimeType = "image/png", size = 15, location = "x"),
-    )
-    foXMLs.foreach { case (id, xml) =>
-      (app.fedoraProvider.loadFoXml(_: String)) expects id once() returning Success(xml)
+    val app: AppWithMockedServices = new AppWithMockedServices() {
+      expectAUser()
+      (fedoraProvider.getSubordinates(_: String)) expects "easy-dataset:13" once() returning
+        Success(Seq("easy-file:1", "easy-file:2", "easy-file:3", "easy-file:4", "easy-file:5"))
+      val foXMLs = Map(
+        "easy-dataset:13" -> XML.loadFile((sampleFoXML / "streaming.xml").toJava),
+        "easy-discipline:6" -> audienceFoXML("easy-discipline:6", "D35400"),
+        "easy-file:1" -> fileFoXml(id = 1, name = "a.txt", location = "x", digest = digests("lalala")), // default: original
+        "easy-file:2" -> fileFoXml(id = 2, name = "b.pdf", mimeType = "application/pdf", size = 10, accessibleTo = "ANONYMOUS", digest = digests("lalala")),
+        "easy-file:3" -> fileFoXml(id = 3, name = "c.pdf", mimeType = "application/pdf", size = 20, accessibleTo = "ANONYMOUS", digest = digests("lalala")),
+        "easy-file:4" -> fileFoXml(id = 4, name = "d.pdf", mimeType = "application/pdf", size = 15, accessibleTo = "NONE", digest = digests("lalala")),
+        "easy-file:5" -> fileFoXml(id = 5, name = "e.png", mimeType = "image/png", size = 15, location = "x", digest = digests("lalala")),
+      )
+      foXMLs.foreach { case (id, xml) =>
+        (fedoraProvider.loadFoXml(_: String)) expects id once() returning Success(xml)
+      }
+      Seq(2, 3, 4).foreach(i =>
+        (fedoraProvider.disseminateDatastream(_: String, _: String)
+          ) expects(s"easy-file:$i", "EASY_FILE") once() returning managed("lalala".inputStream)
+      )
     }
-    Seq(1, 5).foreach(i =>
-      (app.fedoraProvider.disseminateDatastream(_: String, _: String)
-        ) expects(s"easy-file:$i", "EASY_FILE") once() returning managed("blablabla".inputStream)
-    )
     // end of mocking
 
     val bagDir = testDir / "bags" / UUID.randomUUID.toString
-    app.addPayloads(emptyBag(bagDir), ALL_BUT_ORIGINAL, foXMLs.keys.toList) shouldBe a[Success[_]]
+    app.createFirstBag("easy-dataset:13", bagDir, Options(app.filter, originalVersioning = true))
+      .map(_.nextFileInfos.map(_.path.toString).sortBy(identity)) shouldBe
+      Success(Vector("original/b.pdf", "original/c.pdf", "x/a.txt", "x/e.png"))
+
     (bagDir / "data").listRecursively.toList.map(_.name) should
-      contain theSameElementsAs List("x", "a.txt", "e.png")
+      contain theSameElementsAs List("original", "c.pdf", "b.pdf", "d.pdf")
   }
 
   it should "cause NoPayloadFilesException" in {
-    val app = new MockedApp()
-    val foXMLs = Map(
-      "easy-file:1" -> fileFoXml(id = 1, name = "a.txt"),
-      "easy-file:5" -> fileFoXml(id = 5, name = "e.png", mimeType = "image/png"),
-    )
-    foXMLs.foreach { case (id, xml) =>
-      (app.fedoraProvider.loadFoXml(_: String)) expects id once() returning Success(xml)
+    val app: AppWithMockedServices = new AppWithMockedServices() {
+      expectAUser()
+      (fedoraProvider.getSubordinates(_: String)) expects "easy-dataset:13" once() returning
+        Success(Seq("easy-file:1", "easy-file:5"))
+      val foXMLs = Map(
+        "easy-dataset:13" -> XML.loadFile((sampleFoXML / "streaming.xml").toJava),
+        "easy-discipline:6" -> audienceFoXML("easy-discipline:6", "D35400"),
+        "easy-file:1" -> fileFoXml(id = 1, name = "a.txt"),
+        "easy-file:5" -> fileFoXml(id = 5, name = "e.png", mimeType = "image/png"),
+      )
+      foXMLs.foreach { case (id, xml) =>
+        (fedoraProvider.loadFoXml(_: String)) expects id once() returning Success(xml)
+      }
     }
-
     // end of mocking
 
     val bagDir = testDir / "bags" / UUID.randomUUID.toString
-    app.addPayloads(emptyBag(bagDir), LARGEST_IMAGE, foXMLs.keys.toList) shouldBe
+    app.createFirstBag("easy-dataset:13", bagDir, Options(app.filter, europeana = true)) shouldBe
       Failure(NoPayloadFilesException())
-  }
-
-  private def emptyBag(bagDir: File) = DansV0Bag
-    .empty(bagDir)
-    .getOrElse(fail("could not create test bag"))
-
-  private def expectAUser(ldapContext: => InitialLdapContext) = {
-    val result = mock[NamingEnumeration[SearchResult]]
-    result.hasMoreElements _ expects() returning true
-    val attributes = new BasicAttributes {
-      put("displayname", "U.Ser")
-      put("mail", "does.not.exist@dans.knaw.nl")
-    }
-    result.nextElement _ expects() returning new SearchResult("", null, attributes)
-    (ldapContext.search(_: String, _: String, _: SearchControls)) expects(*, *, *) returning result
   }
 }

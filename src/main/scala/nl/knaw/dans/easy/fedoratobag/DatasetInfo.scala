@@ -15,14 +15,11 @@
  */
 package nl.knaw.dans.easy.fedoratobag
 
-object FileFilterType extends Enumeration {
-  type FileFilterType = Value
+case class DatasetInfo(
+                        maybeFilterViolations: Option[String],
+                        doi: String,
+                        depositor: Depositor,
+                        nextFileInfos: Seq[FileInfo],
+                      ){
 
-  // @formatter:off
-  val LARGEST_PDF: FileFilterType = Value("LARGEST_PDF")
-  val LARGEST_IMAGE: FileFilterType = Value("LARGEST_IMAGE")
-  val ALL_FILES: FileFilterType = Value("ALL_FILES")
-  val ORIGINAL_FILES: FileFilterType = Value("ORIGINAL_FILES")
-  val NOT_ACCESSIBLE: FileFilterType = Value("NOT_ACCESSIBLE")
-  // @formatter:on
 }
