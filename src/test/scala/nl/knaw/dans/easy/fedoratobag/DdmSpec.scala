@@ -399,9 +399,9 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
            <dcx-gml:spatial srsName="http://www.opengis.net/def/crs/EPSG/0/4326">
              <Point xmlns="http://www.opengis.net/gml"><pos>4.34521 52.08110</pos></Point>
            </dcx-gml:spatial>
-           <dcx-gml:spatial><Point xmlns="http://www.opengis.net/gml"><pos>2 1</pos></Point></dcx-gml:spatial>
-           <dcx-gml:spatial><Point xmlns="http://www.opengis.net/gml"><pos>0 1</pos></Point></dcx-gml:spatial>
-           <dcx-gml:spatial><Point xmlns="http://www.opengis.net/gml"><pos>2 0</pos></Point></dcx-gml:spatial>
+           <dcx-gml:spatial srsName="http://www.opengis.net/def/crs/EPSG/0/4326"><Point xmlns="http://www.opengis.net/gml"><pos>2 1</pos></Point></dcx-gml:spatial>
+           <dcx-gml:spatial srsName="http://www.opengis.net/def/crs/EPSG/0/4326"><Point xmlns="http://www.opengis.net/gml"><pos>0 1</pos></Point></dcx-gml:spatial>
+           <dcx-gml:spatial srsName="http://www.opengis.net/def/crs/EPSG/0/4326"><Point xmlns="http://www.opengis.net/gml"><pos>2 0</pos></Point></dcx-gml:spatial>
            <dct:license xsi:type="dct:URI">{ DDM.cc0 }</dct:license>
         </ddm:dcmiMetadata>
       </ddm:DDM>
@@ -558,6 +558,87 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
         </ddm:dcmiMetadata>
       </ddm:DDM>
     )) // Note that even te validation is happy with a pointless polygon or an interior without exterior
+    assume(schemaIsAvailable)
+    triedDDM.flatMap(validate) shouldBe Success(())
+  }
+
+  it should "render a box with an srsName" in {
+    val emd = parseEmdContent(Seq(
+      emdTitle, emdCreator, emdDescription, emdDates,
+        <emd:coverage>
+          <eas:spatial>
+            <eas:box>
+              <eas:north>455271.2</eas:north>
+              <eas:east>83575.4</eas:east>
+              <eas:south>455271.0</eas:south>
+              <eas:west>83575.0</eas:west>
+            </eas:box>
+          </eas:spatial>
+          <eas:spatial>
+            <eas:box>
+              <eas:north>79.5</eas:north>
+              <eas:east>23.0</eas:east>
+              <eas:south>76.7</eas:south>
+              <eas:west>10.0</eas:west>
+            </eas:box>
+          </eas:spatial>
+          <eas:spatial>
+            <eas:box>
+              <eas:north>383575.0</eas:north>
+            </eas:box>
+          </eas:spatial>
+          <eas:spatial>
+            <eas:box>
+                <eas:north>79.5</eas:north>
+            </eas:box>
+          </eas:spatial>
+        </emd:coverage>,
+      emdRights,
+    ))
+    val triedDDM = DDM(emd, Seq("D35400"), abrMapping)
+    // logs
+    //  ERROR not implemented invalid box [SpatialBox(Some(RD),None,None,None,None)]
+    //  ERROR not implemented invalid box [SpatialBox(Some(degrees),None,None,None,None)]
+    triedDDM.map(normalized) shouldBe Success(normalized(
+      <ddm:DDM xsi:schemaLocation={ schemaLocation }>
+        { ddmProfile("D35400") }
+        <ddm:dcmiMetadata>
+           <dcx-gml:spatial>
+             <boundedBy xmlns="http://www.opengis.net/gml">
+               <Envelope srsName="http://www.opengis.net/def/crs/EPSG/0/28992">
+                 <lowerCorner>83575.0 455271.0</lowerCorner>
+                 <upperCorner>83575.4 455271.2</upperCorner>
+               </Envelope>
+             </boundedBy>
+           </dcx-gml:spatial>
+           <dcx-gml:spatial>
+             <boundedBy xmlns="http://www.opengis.net/gml">
+               <Envelope srsName="http://www.opengis.net/def/crs/EPSG/0/4326">
+                 <lowerCorner>76.7 10.0</lowerCorner>
+                 <upperCorner>79.5 23.0</upperCorner>
+               </Envelope>
+             </boundedBy>
+           </dcx-gml:spatial>
+           <dcx-gml:spatial>
+             <boundedBy xmlns="http://www.opengis.net/gml">
+               <Envelope srsName="http://www.opengis.net/def/crs/EPSG/0/28992">
+                 <lowerCorner>0 0</lowerCorner>
+                 <upperCorner>0 383575.0</upperCorner>
+               </Envelope>
+             </boundedBy>
+           </dcx-gml:spatial>
+           <dcx-gml:spatial>
+             <boundedBy xmlns="http://www.opengis.net/gml">
+               <Envelope srsName="http://www.opengis.net/def/crs/EPSG/0/4326">
+                 <lowerCorner>0 0</lowerCorner>
+                 <upperCorner>79.5 0</upperCorner>
+               </Envelope>
+             </boundedBy>
+           </dcx-gml:spatial>
+           <dct:license xsi:type="dct:URI">{ DDM.cc0 }</dct:license>
+        </ddm:dcmiMetadata>
+      </ddm:DDM>
+    ))
     assume(schemaIsAvailable)
     triedDDM.flatMap(validate) shouldBe Success(())
   }
@@ -878,6 +959,38 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
     triedDDM.flatMap(validate) shouldBe Success(())
   }
 
+  it should "accept empty title" in {
+    val emd = parseEmdContent(Seq(
+      emdTitle, emdCreator, emdDescription, emdDates,
+      <emd:relation>
+          <eas:replaces>
+              <eas:subject-link>https://www.laaglandarcheologie.nl</eas:subject-link>
+          </eas:replaces>
+          <eas:isPartOf>
+              <eas:subject-title></eas:subject-title>
+              <eas:subject-link>https://www.laaglandarcheologie.nl</eas:subject-link>
+          </eas:isPartOf>
+          <eas:references>
+              <eas:subject-title/>
+              <eas:subject-link>https://www.laaglandarcheologie.nl</eas:subject-link>
+          </eas:references>
+      </emd:relation>,
+      emdRights,
+    ))
+    val triedDDM = DDM(emd, Seq("D13200"), abrMapping)
+    triedDDM.map(normalized) shouldBe Success(normalized(
+      <ddm:DDM xsi:schemaLocation={ schemaLocation }>
+        { ddmProfile("D13200") }
+        <ddm:dcmiMetadata>
+          <ddm:references href="https://www.laaglandarcheologie.nl">https://www.laaglandarcheologie.nl</ddm:references>
+          <ddm:replaces href="https://www.laaglandarcheologie.nl">https://www.laaglandarcheologie.nl</ddm:replaces>
+          <ddm:isPartOf href="https://www.laaglandarcheologie.nl">https://www.laaglandarcheologie.nl</ddm:isPartOf>
+          <dct:license xsi:type="dct:URI">{ DDM.cc0 }</dct:license>
+        </ddm:dcmiMetadata>
+      </ddm:DDM>
+    ))
+  }
+
   it should "report not implemented href" in {
     val emd = parseEmdContent(Seq(
       emdTitle, emdCreator, emdDescription, emdDates,
@@ -1044,7 +1157,37 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
     }
   }
 
-  it should "render an invalid number of dates created" in {
+  it should "parse dates into reasonable dates" in {
+    val emd = parseEmdContent(Seq(
+      emdTitle, emdCreator, emdDescription,
+          <emd:date>
+            <eas:created eas:scheme="W3CDTF" eas:format="MILLISECOND">20180223-01-01T00:10:34.000+01:00</eas:created>
+            <eas:available eas:scheme="W3CDTF" eas:format="DAY">2017-09-30T17:47:36.978+02:00</eas:available>
+          </emd:date>,
+      emdRights,
+    ))
+    val triedDDM = DDM(emd, Seq("D35400"), abrMapping)
+    triedDDM.map(normalized) shouldBe Success(normalized(
+      <ddm:DDM xsi:schemaLocation={ schemaLocation }>
+        <ddm:profile>
+          <dc:title>XXX</dc:title>
+          <dct:description>YYY</dct:description>
+          { ddmCreator }
+          <ddm:created>2018-02-23</ddm:created>
+          <ddm:available>2017-09-30</ddm:available>
+          <ddm:audience>D35400</ddm:audience>
+          <ddm:accessRights>OPEN_ACCESS</ddm:accessRights>
+        </ddm:profile>
+        <ddm:dcmiMetadata>
+          <dct:license xsi:type="dct:URI">{ DDM.cc0 }</dct:license>
+        </ddm:dcmiMetadata>
+      </ddm:DDM>
+    ))
+    assume(schemaIsAvailable)
+    triedDDM.flatMap(validate) shouldBe Success(())
+  }
+
+  it should "render one ddm:created" in {
     val emd = parseEmdContent(Seq(
       emdTitle, emdCreator, emdDescription,
           <emd:date>
@@ -1063,23 +1206,19 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
           <dct:description>YYY</dct:description>
           { ddmCreator }
           <ddm:created>2013-03</ddm:created>
-          <ddm:created>2017-09-30</ddm:created>
-          <ddm:created>1901-04</ddm:created>
           <ddm:available>2013-04</ddm:available>
           <ddm:audience>D35400</ddm:audience>
           <ddm:accessRights>OPEN_ACCESS</ddm:accessRights>
         </ddm:profile>
         <ddm:dcmiMetadata>
           <dct:license xsi:type="dct:URI">{ DDM.cc0 }</dct:license>
+          <dct:created>2017-09-30</dct:created>
+          <dct:created>1901-04</dct:created>
         </ddm:dcmiMetadata>
       </ddm:DDM>
     ))
     assume(schemaIsAvailable)
-    triedDDM.flatMap(validate) should matchPattern {
-      case Failure(e) if e.getMessage
-        .contains("Invalid content was found starting with element 'ddm:created'") && e.getMessage
-        .contains(":available}' is expected") =>
-    }
+    triedDDM.flatMap(validate) shouldBe Success(())
   }
 
   it should "render an invalid number of dates available" in {

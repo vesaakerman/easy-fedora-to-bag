@@ -27,6 +27,8 @@ import nl.knaw.dans.pf.language.emd.{ EasyMetadataImpl, EmdRights }
 import scala.collection.JavaConverters._
 import scala.util.Try
 import scala.xml._
+import java.time.format.DateTimeFormatter
+import java.time.{ DateTimeException, LocalDate }
 
 object DDM extends DebugEnhancedLogging {
   val schemaNameSpace: String = "http://easy.dans.knaw.nl/schemas/md/ddm/"
@@ -38,9 +40,9 @@ object DDM extends DebugEnhancedLogging {
     //    println(new EmdMarshaller(emd).getXmlString)
 
     val dateMap: Map[String, Iterable[Elem]] = getDateMap(emd)
-    val dateCreated = dateMap("created")
+    val dateCreated = dateMap("created").map(d => parseDate(d.text))
     val dateAvailable = {
-      val elems = dateMap("available")
+      val elems = dateMap("available").map(d => parseDate(d.text))
       if (elems.isEmpty) dateCreated
       else elems
     }
@@ -62,8 +64,8 @@ object DDM extends DebugEnhancedLogging {
        { /* instructions for reuse not specified as such in EMD */ }
        { emd.getEmdCreator.getDcCreator.asScala.map(bs => <dc:creator>{ bs.getValue.trim }</dc:creator>) }
        { emd.getEmdCreator.getEasCreator.asScala.map(author => <dcx-dai:creatorDetails>{ toXml(author)} </dcx-dai:creatorDetails>) }
-       { dateCreated.map(node =>  <ddm:created>{ node.text }</ddm:created>) }
-       { dateAvailable.map(node =>  <ddm:available>{ node.text }</ddm:available>) }
+       { if (dateCreated.nonEmpty)  <ddm:created>{ dateCreated.toSeq.head }</ddm:created> }
+       { dateAvailable.map(date =>  <ddm:available>{ date }</ddm:available>) }
        { audiences.map(code => <ddm:audience>{ code }</ddm:audience>) }
        <ddm:accessRights>{ emd.getEmdRights.getAccessCategory }</ddm:accessRights>
      </ddm:profile>
@@ -91,9 +93,12 @@ object DDM extends DebugEnhancedLogging {
        { emd.getEmdCoverage.getEasSpatial.asScala.map(toXml) }
        <dct:license xsi:type="dct:URI">{ toLicenseUrl(emd.getEmdRights) }</dct:license>
        { emd.getEmdLanguage.getDcLanguage.asScala.map(bs => <dct:language xsi:type={langType(bs)}>{ langValue(bs) }</dct:language>) }
+       { if (dateCreated.size > 1) dateCreated.toSeq.tail.map(date => <dct:created>{ date }</dct:created>) }
      </ddm:dcmiMetadata>
    </ddm:DDM>
  }
+
+
 
   private def langType(bs: BasicString): String = bs.getSchemeId match {
     case "fra" | "fra/fre" | "deu" | "deu/ger" | "nld" | "nld/dut" | "dut/nld" | "eng" => "dct:ISO639-3"
@@ -301,12 +306,27 @@ object DDM extends DebugEnhancedLogging {
       .mapValues(_.flatMap(_._2))
   }
 
+  private def parseDate(d: String): String = {
+    if(d.length > 13)
+      try {
+        LocalDate.parse(d.substring(0,8), DateTimeFormatter.BASIC_ISO_DATE).toString
+      } catch {
+        case e: DateTimeException => d
+      }
+    else
+      d
+  }
+
   private def toRelationXml(key: String, rel: Relation): Elem = Try {
     {
       <label scheme={ relationType(rel) }
              href={ Option(rel.getSubjectLink).map(toHref).orNull }
              xml:lang={ Option(rel.getSubjectTitle).map(_.getLanguage).orNull }
-      >{ Option(rel.getSubjectTitle).map(_.getValue.trim).getOrElse("") }</label>
+      >{
+        val optionTitle = Option(rel.getSubjectTitle).getOrElse(new BasicString()).getValue.toOption
+        optionTitle.map(_.trim)
+          .getOrElse(rel.getSubjectLink)
+        }</label>
     }.withLabel(relationLabel("ddm:", key))
   }.getOrElse(notImplemented(s"relation ($key)")(rel))
 
