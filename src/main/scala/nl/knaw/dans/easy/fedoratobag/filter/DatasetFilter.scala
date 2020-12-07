@@ -17,6 +17,7 @@ package nl.knaw.dans.easy.fedoratobag.filter
 
 import nl.knaw.dans.common.lang.dataset.AccessCategory.{ OPEN_ACCESS, REQUEST_PERMISSION }
 import nl.knaw.dans.easy.fedoratobag._
+import nl.knaw.dans.easy.fedoratobag.versions.VersionInfo
 import nl.knaw.dans.lib.logging.DebugEnhancedLogging
 import nl.knaw.dans.pf.language.emd.EasyMetadataImpl
 
@@ -80,11 +81,12 @@ trait DatasetFilter extends DebugEnhancedLogging {
   }
 
   def findDansRelations(ddm: Node): Seq[Node] = {
+    val dcmi = ddm \ "dcmiMetadata"
     Seq(
-      (ddm \\ "isVersionOf").theSeq,
-      (ddm \\ "hasVersion").theSeq,
-      (ddm \\ "replaces").theSeq,
-      (ddm \\ "isReplacedBy").theSeq,
+      (dcmi \ "isVersionOf").theSeq,
+      (dcmi \ "hasVersion").theSeq,
+      (dcmi \ "replaces").theSeq,
+      (dcmi \ "isReplacedBy").theSeq,
     ).flatten
       .filter(hasDansId)
   }
@@ -92,15 +94,9 @@ trait DatasetFilter extends DebugEnhancedLogging {
   private def hasDansId(node: Node): Boolean = {
     // see both DDM.toRelationXml methods for what might occur
     (node \@ "href", node.text) match {
-      case (href, _) if isDansId(href) => true
-      case (_, text) if isDansId(text) => true
+      case (href, _) if VersionInfo.isDansId(href) => true
+      case (_, text) if VersionInfo.isDansId(text) => true
       case _ => false
     }
   }
-
-  private def isDansId(s: String) = Seq(
-    "doi.org/10.17026/",
-    "easy-dataset:",
-    "urn:nbn:nl:ui:13-",
-  ).exists(s.contains(_))
 }
