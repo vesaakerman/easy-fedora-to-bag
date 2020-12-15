@@ -28,7 +28,7 @@ import com.yourmediashelf.fedora.client.{ FedoraClient, FedoraClientException }
 import javax.naming.ldap.InitialLdapContext
 import nl.knaw.dans.bag.ChecksumAlgorithm
 import nl.knaw.dans.bag.v0.DansV0Bag
-import nl.knaw.dans.easy.fedoratobag.Command.FeedBackMessage
+import nl.knaw.dans.easy.fedoratobag.Command.{ FeedBackMessage, logger }
 import nl.knaw.dans.easy.fedoratobag.FileItem.{ checkNotImplemented, filesXml }
 import nl.knaw.dans.easy.fedoratobag.FoXml.{ getEmd, _ }
 import nl.knaw.dans.easy.fedoratobag.OutputFormat.OutputFormat
@@ -53,14 +53,47 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
   private lazy val ldap = new Ldap(ldapContext)
   private val emdUnmarshaller = new EmdUnmarshaller(classOf[EasyMetadataImpl])
 
+  def createSequences(lines: Iterator[String], outputDir: File, options: Options)(printer: CSVPrinter): Try[FeedBackMessage] = {
+    logger.info(options.toString)
+
+    def exportBag(firstVersion: Option[VersionInfo], datasetId: DatasetId): Try[VersionInfo] = {
+      val packageUUID = UUID.randomUUID
+      val packageDir = configuration.stagingDir / packageUUID.toString
+      val csvUuid1 = firstVersion.map(_.packageId).getOrElse(packageUUID)
+      val csvUuid2 = firstVersion.map(_ => packageUUID)
+      for {
+        datasetInfo <- createBag(datasetId, packageDir / UUID.randomUUID.toString, options, firstVersion)
+        _ <- movePackageAtomically(packageDir, outputDir)
+        thisVersionInfo = VersionInfo(datasetInfo, packageUUID)
+        _ <- CsvRecord(datasetId, datasetInfo, csvUuid1, csvUuid2, options).print(printer)
+      } yield thisVersionInfo
+    }
+
+    def exportWithRecover(firstVersion: VersionInfo)(datasetId: DatasetId): Try[Any] = {
+      val tried = exportBag(Some(firstVersion), datasetId)
+      errorHandling(tried, printer, datasetId, firstVersion.packageId)
+    }
+
+    def exportSequence(datasetIds: Array[Depositor])(firstDatasetId: DatasetId) = for {
+      versionInfo <- exportBag(None, firstDatasetId)
+      _ <- datasetIds
+        .map(exportWithRecover(versionInfo))
+        .toSeq.failFastOr(Success(()))
+    } yield ()
+
+    lines.map { line =>
+      val datasetIds = line.split(",")
+      val triedUnit = datasetIds
+        .headOption
+        .map(exportSequence(datasetIds.drop(1)))
+        .getOrElse(Success(()))
+      errorHandling(triedUnit, printer, datasetIds.head, null)
+    }.failFastOr(Success("no fedora/IO errors"))
+  }
+
   def createExport(input: Iterator[DatasetId], outputDir: File, options: Options, outputFormat: OutputFormat)
                   (printer: CSVPrinter): Try[FeedBackMessage] = input.map { datasetId =>
-
-    def movePackageAtomically(packageDir: File) = {
-      val target = outputDir / packageDir.name
-      debug(s"Moving $outputFormat to output dir: $target")
-      Try(packageDir.moveTo(target)(CopyOptions.atomically))
-    }
+    logger.info(options.toString)
 
     def bagDir(packageDir: File) = outputFormat match {
       case OutputFormat.AIP => packageDir
@@ -73,41 +106,39 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
     val packageDir2 = configuration.stagingDir / packageUuid2.toString
     val bagDir1 = bagDir(packageDir1)
     val triedCsvRecord = for {
-      datasetInfo <- createFirstBag(datasetId, bagDir1, options)
+      datasetInfo <- createBag(datasetId, bagDir1, options)
       maybeBagDir2 = if (datasetInfo.nextFileInfos.isEmpty) None
                      else Some(bagDir(packageDir2))
       _ <- maybeBagDir2.map(createSecondBag(datasetInfo, bagDir1, packageUuid1)).getOrElse(Success(()))
       // the 2nd bag is moved first, thus a next process has a chance to stumble over a missing first bag in case of interrupts
-      _ <- maybeBagDir2.map(_ => movePackageAtomically(packageDir2)).getOrElse(Success(()))
-      _ <- movePackageAtomically(packageDir1)
-    } yield CsvRecord(
-      datasetId,
-      packageUuid1,
-      maybeBagDir2.map(_ => packageUuid2),
-      datasetInfo.doi,
-      datasetInfo.depositor,
-      transformationType = datasetInfo.maybeFilterViolations.map(_ => "not strict simple").getOrElse(SIMPLE.toString),
-      datasetInfo.maybeFilterViolations.getOrElse("OK"),
-    )
-    errorHandling(triedCsvRecord, printer, datasetId, packageDir1)
+      _ <- maybeBagDir2.map(_ => movePackageAtomically(packageDir2, outputDir)).getOrElse(Success(()))
+      _ <- movePackageAtomically(packageDir1, outputDir)
+      maybeUuid2 = maybeBagDir2.map(_ => packageUuid2)
+      _ <- CsvRecord(datasetId, datasetInfo, packageUuid1, maybeUuid2, options).print(printer)
+    } yield ()
+    errorHandling(triedCsvRecord, printer, datasetId, packageUuid1)
   }.failFastOr(Success("no fedora/IO errors"))
 
-  private def errorHandling(triedCsvRecord: Try[CsvRecord], printer: CSVPrinter, datasetId: DatasetId, packageDir: File) = {
-    triedCsvRecord
-      .doIfFailure {
-        case t: InvalidTransformationException => logger.warn(s"$datasetId -> $packageDir failed: ${ t.getMessage }")
-        case t: Throwable => logger.error(s"$datasetId -> $packageDir had a not expected exception: ${ t.getMessage }", t)
-      }
-      .recoverWith {
-        case t: FedoraClientException if t.getStatus != 404 => Failure(t)
-        case t: IOException => Failure(t)
-        case t => Success(CsvRecord(
-          datasetId, UUID.fromString(packageDir.name), None, doi = "", depositor = "", SIMPLE.toString, s"FAILED: $t"
-        ))
-      }.doIfSuccess(_.print(printer))
+  private def movePackageAtomically(packageDir: File, outputDir: File) = {
+    val target = outputDir / packageDir.name
+    debug(s"Moving $packageDir to output dir: $target")
+    Try(packageDir.moveTo(target)(CopyOptions.atomically))
   }
 
-  protected[EasyFedoraToBagApp] def createSecondBag(datasetInfo: DatasetInfo, bagDir1: File, isVersionOf: UUID)(bagDir2: File): Try[Unit] = {
+  private def errorHandling[T](tried: Try[T], printer: CSVPrinter, datasetId: DatasetId, packageUUID: UUID) = {
+    tried.doIfFailure {
+      case t: InvalidTransformationException => logger.warn(s"$datasetId -> $packageUUID failed: ${ t.getMessage }")
+      case t: Throwable => logger.error(s"$datasetId -> $packageUUID had a not expected exception: ${ t.getMessage }", t)
+    }.recoverWith {
+      case t: FedoraClientException if t.getStatus != 404 => Failure(t)
+      case t: IOException => Failure(t)
+      case t => CsvRecord(datasetId, packageUUID, None, doi = "", depositor = "", "-", s"FAILED: $t")
+        .print(printer)
+        Success(())
+    }
+  }
+
+  private def createSecondBag(datasetInfo: DatasetInfo, bagDir1: File, isVersionOf: UUID)(bagDir2: File): Try[Unit] = {
 
     def copy(fileName: String, bag2: DansV0Bag) = {
       (bagDir1 / "metadata" / fileName)
@@ -139,7 +170,7 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
     } yield ()
   }
 
-  protected[EasyFedoraToBagApp] def createFirstBag(datasetId: DatasetId, bagDir: File, options: Options): Try[DatasetInfo] = {
+  def createBag(datasetId: DatasetId, bagDir: File, options: Options, firstVersionInfo: Option[VersionInfo] = None): Try[DatasetInfo] = {
 
     def managedMetadataStream(foXml: Elem, streamId: String, bag: DansV0Bag, metadataFile: String) = {
       managedStreamLabel(foXml, streamId)
@@ -166,7 +197,8 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
       _ = if (options.strict) maybeFilterViolations.foreach(msg => throw InvalidTransformationException(msg))
       _ = logger.info(s"Creating $bagDir from $datasetId with owner $depositor")
       bag <- DansV0Bag.empty(bagDir)
-        .map(_.withEasyUserAccount(depositor).withCreated(DateTime.now()))
+      _ = bag.withEasyUserAccount(depositor).withCreated(DateTime.now())
+      _ = firstVersionInfo.map(_.addVersionOf(bag))
       _ <- addXmlMetadataTo(bag, "emd.xml")(emdXml)
       _ <- addXmlMetadataTo(bag, "amd.xml")(amd)
       _ <- getDdm(foXml)
@@ -196,7 +228,7 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
       doi = emd.getEmdIdentifier.getDansManagedDoi
       urn = getUrn(datasetId, emd)
       nextFileInfos = if (maybeFilterViolations.nonEmpty && options.strict) Seq.empty
-                      else getNextFileInfos(allFileInfos, firstFileInfos, options.originalVersioning)
+                      else getNextFileInfos(allFileInfos, firstFileInfos, options.transformationType == ORIGINAL_VERSIONED)
     } yield DatasetInfo(maybeFilterViolations, doi, urn, depositor, nextFileInfos)
   }
 

@@ -23,6 +23,7 @@ import javax.naming.NamingEnumeration
 import javax.naming.directory.{ BasicAttributes, SearchControls, SearchResult }
 import javax.naming.ldap.InitialLdapContext
 import nl.knaw.dans.easy.fedoratobag.OutputFormat.SIP
+import nl.knaw.dans.easy.fedoratobag.TransformationType.ORIGINAL_VERSIONED
 import nl.knaw.dans.easy.fedoratobag.filter.{ BagIndex, InvalidTransformationException, SimpleDatasetFilter }
 import nl.knaw.dans.easy.fedoratobag.fixture._
 import org.scalamock.scalatest.MockFactory
@@ -34,16 +35,10 @@ import scala.xml.XML
 class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupport with MockFactory with FileSystemSupport with AudienceSupport {
   implicit val logFile: File = testDir / "log.txt"
 
-  override def beforeEach(): Unit = {
-    super.beforeEach()
-    if (testDir.exists) testDir.delete()
-    testDir.createDirectories()
-  }
-
-  private class MockedLdapContext extends InitialLdapContext(new java.util.Hashtable[String, String](), null)
-
   private class AppWithMockedServices(configuration: Configuration = new Configuration("test-version", null, null, null, testDir / "staging", AbrMappings(File("src/main/assembly/dist/cfg/EMD_acdm.xsl"))),
                                      ) extends EasyFedoraToBagApp(configuration) {
+    private class MockedLdapContext extends InitialLdapContext(new java.util.Hashtable[String, String](), null)
+
     override lazy val fedoraProvider: FedoraProvider = mock[FedoraProvider]
     override lazy val ldapContext: InitialLdapContext = mock[MockedLdapContext]
     override lazy val bagIndex: BagIndex = mockBagIndexRespondsWith(body = "<result/>", code = 200)
@@ -60,10 +55,9 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
       (ldapContext.search(_: String, _: String, _: SearchControls)) expects(*, *, *) once() returning result
     }
 
-    // make almost private methods available for tests
-
-    override def createFirstBag(datasetId: DatasetId, bagDir: File, options: Options): Try[DatasetInfo] =
-      super.createFirstBag(datasetId, bagDir, options)
+    // make almost private method available for tests
+    override def createBag(datasetId: DatasetId, bagDir: File, options: Options, firstVersionInfo: Option[VersionInfo] = None): Try[DatasetInfo] =
+      super.createBag(datasetId, bagDir, options)
   }
 
   "createExport" should "produce two bags" in {
@@ -96,12 +90,47 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
     app.createExport(
       Iterator("easy-dataset:17"),
       (testDir / "output").createDirectories,
-      Options(SimpleDatasetFilter(), originalVersioning = true),
+      Options(SimpleDatasetFilter(), ORIGINAL_VERSIONED),
       SIP
     )(CsvRecord.csvFormat.print(sw)) shouldBe Success("no fedora/IO errors")
     sw.toString should fullyMatch regex
       """easyDatasetId,uuid1,uuid2,doi,depositor,transformationType,comment
-        |easy-dataset:17,.*,10.17026/test-Iiib-z9p-4ywa,user001,simple,OK
+        |easy-dataset:17,.+,.+,10.17026/test-Iiib-z9p-4ywa,user001,original-versioned,OK
+        |""".stripMargin
+  }
+
+  it should "produce a single bags" in {
+    val app = new AppWithMockedServices() {
+      Map(
+        "easy-discipline:77" -> audienceFoXML("easy-discipline:77", "D13200"),
+        "easy-dataset:17" -> XML.loadFile((sampleFoXML / "DepositApi.xml").toJava),
+        "easy-file:35" -> fileFoXml(digest = digests("acabadabra")),
+      ).foreach { case (id, xml) =>
+        (fedoraProvider.loadFoXml(_: String)) expects id once() returning Success(xml)
+      }
+      Seq(
+        (1, "easy-dataset:17", "ADDITIONAL_LICENSE", "lalala"),
+        (1, "easy-dataset:17", "DATASET_LICENSE", "blablabla"),
+        (1, "easy-file:35", "EASY_FILE", "acabadabra"),
+      ).foreach { case (n, objectId, streamId, content) =>
+        (fedoraProvider.disseminateDatastream(_: String, _: String)) expects(objectId, streamId
+        ) returning managed(content.inputStream) repeat n
+      }
+      (fedoraProvider.getSubordinates(_: String)) expects "easy-dataset:17" once() returning
+        Success(Seq("easy-file:35"))
+    }
+    // end of mocking
+
+    val sw = new StringWriter()
+    app.createExport(
+      Iterator("easy-dataset:17"),
+      (testDir / "output").createDirectories,
+      Options(SimpleDatasetFilter(), ORIGINAL_VERSIONED),
+      SIP
+    )(CsvRecord.csvFormat.print(sw)) shouldBe Success("no fedora/IO errors")
+    sw.toString should fullyMatch regex
+      """easyDatasetId,uuid1,uuid2,doi,depositor,transformationType,comment
+        |easy-dataset:17,.+,,10.17026/test-Iiib-z9p-4ywa,user001,original-versioned without second bag,OK
         |""".stripMargin
   }
 
@@ -136,7 +165,7 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
     )(CsvRecord.csvFormat.print(sw)) shouldBe Success("no fedora/IO errors")
     sw.toString should fullyMatch regex
       """easyDatasetId,uuid1,uuid2,doi,depositor,transformationType,comment
-        |easy-dataset:17,.*,,,,simple,FAILED: java.lang.Exception: checksum error .* easy-file:35 .*/data/original/something.txt
+        |easy-dataset:17,.+,,,,-,FAILED: java.lang.Exception: checksum error .* easy-file:35 .*/data/original/something.txt
         |""".stripMargin
   }
 
@@ -163,7 +192,7 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
 
     val uuid = UUID.randomUUID
     val bagDir = testDir / "bags" / uuid.toString
-    app.createFirstBag("easy-dataset:17", bagDir, Options(app.filter, strict = false)) shouldBe
+    app.createBag("easy-dataset:17", bagDir, Options(app.filter, strict = false)) shouldBe
       Failure(NoPayloadFilesException())
 
     // post conditions
@@ -180,7 +209,7 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
   it should "report strict simple violation" in {
     val app = new AppWithMockedServices() {
       (fedoraProvider.getSubordinates(_: String)) expects "easy-dataset:17" once() returning
-        Success(Seq("easy-jumpoff:1"))
+        Success(Seq("dans-jumpoff:1"))
       Map(
         "easy-discipline:77" -> audienceFoXML("easy-discipline:77", "D13200"),
         "easy-dataset:17" -> XML.loadFile((sampleFoXML / "DepositApi.xml").toJava),
@@ -193,7 +222,7 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
 
     val uuid = UUID.randomUUID
     val bagDir = testDir / "bags" / uuid.toString
-    app.createFirstBag("easy-dataset:17", bagDir, Options(app.filter)) should matchPattern {
+    app.createBag("easy-dataset:17", bagDir, Options(app.filter)) should matchPattern {
       case Failure(_: InvalidTransformationException) =>
     }
     (testDir / "bags") shouldNot exist
@@ -220,8 +249,8 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
 
     val uuid = UUID.randomUUID
     val bagDir = testDir / "bags" / uuid.toString
-    app.createFirstBag("easy-dataset:13", bagDir, Options(app.filter)) shouldBe
-      Success(DatasetInfo(None, "10.17026/mocked-Iiib-z9p-4ywa","urn:nbn:nl:ui:13-blablabla", "user001", Seq.empty))
+    app.createBag("easy-dataset:13", bagDir, Options(app.filter)) shouldBe
+      Success(DatasetInfo(None, "10.17026/mocked-Iiib-z9p-4ywa", "urn:nbn:nl:ui:13-blablabla", "user001", Seq.empty))
 
     // post conditions
 
@@ -263,7 +292,7 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
     // end of mocking
 
     val bagDir = testDir / "bags" / UUID.randomUUID.toString
-    app.createFirstBag("easy-dataset:13", bagDir, Options(app.filter)) should matchPattern {
+    app.createBag("easy-dataset:13", bagDir, Options(app.filter)) should matchPattern {
       case Failure(e) if e.getMessage == "easy-file:35 <visibleTo> not found" =>
     }
   }
@@ -292,7 +321,7 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
     // end of mocking
 
     val bagDir = testDir / "bags" / UUID.randomUUID.toString
-    val triedRecord = app.createFirstBag("easy-dataset:13", bagDir, Options(app.filter))
+    val triedRecord = app.createBag("easy-dataset:13", bagDir, Options(app.filter))
     triedRecord shouldBe a[Success[_]]
     (bagDir / "data").listRecursively.toList.map(_.name) should
       contain theSameElementsAs List("original", "c.txt", "b.txt", "a.txt")
@@ -321,7 +350,7 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
     // end of mocking
 
     val bagDir = testDir / "bags" / UUID.randomUUID.toString
-    app.createFirstBag("easy-dataset:13", bagDir, Options(app.filter, europeana = true)) shouldBe a[Success[_]]
+    app.createBag("easy-dataset:13", bagDir, Options(app.filter, europeana = true)) shouldBe a[Success[_]]
     (bagDir / "data").listRecursively.toList.map(_.name) should
       contain theSameElementsAs List("original", "c.png")
   }
@@ -349,7 +378,7 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
     // end of mocking
 
     val bagDir = testDir / "bags" / UUID.randomUUID.toString
-    app.createFirstBag("easy-dataset:13", bagDir, Options(app.filter, europeana = true)) shouldBe a[Success[_]]
+    app.createBag("easy-dataset:13", bagDir, Options(app.filter, europeana = true)) shouldBe a[Success[_]]
     (bagDir / "data").listRecursively.toList.map(_.name) should
       contain theSameElementsAs List("original", "c.pdf")
   }
@@ -379,7 +408,7 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
     // end of mocking
 
     val bagDir = testDir / "bags" / UUID.randomUUID.toString
-    app.createFirstBag("easy-dataset:13", bagDir, Options(app.filter, originalVersioning = true))
+    app.createBag("easy-dataset:13", bagDir, Options(app.filter, transformationType = ORIGINAL_VERSIONED))
       .map(_.nextFileInfos.map(_.path.toString).sortBy(identity)) shouldBe
       Success(Vector("original/b.pdf", "original/c.pdf", "x/a.txt", "x/e.png"))
 
@@ -405,7 +434,7 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
     // end of mocking
 
     val bagDir = testDir / "bags" / UUID.randomUUID.toString
-    app.createFirstBag("easy-dataset:13", bagDir, Options(app.filter, europeana = true)) shouldBe
+    app.createBag("easy-dataset:13", bagDir, Options(app.filter, europeana = true)) shouldBe
       Failure(NoPayloadFilesException())
   }
 }

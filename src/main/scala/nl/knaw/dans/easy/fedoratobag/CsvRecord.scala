@@ -20,6 +20,7 @@ import java.util.UUID
 
 import better.files.{ Dispose, File }
 import nl.knaw.dans.easy.fedoratobag.Command.FeedBackMessage
+import nl.knaw.dans.easy.fedoratobag.TransformationType.ORIGINAL_VERSIONED
 import org.apache.commons.csv.{ CSVFormat, CSVPrinter }
 
 import scala.util.Try
@@ -49,5 +50,27 @@ object CsvRecord {
   def printer(file: File): Dispose[CSVPrinter] = {
     val writer = file.newFileWriter(append = true)
     new Dispose(csvFormat.print(writer))
+  }
+
+  def apply(datasetId: DatasetId, datasetInfo: DatasetInfo, uuid1: UUID, uuid2: Option[UUID], options: Options): CsvRecord = {
+    val violations = datasetInfo.maybeFilterViolations
+    val comment = if (violations.isEmpty) "OK"
+                  else violations.mkString("")
+    val typePrefix = violations.map(_ => "not strict ").getOrElse("")
+    val typeSuffix = uuid2.map(_ => "")
+      .getOrElse(
+        if (options.transformationType == ORIGINAL_VERSIONED)
+          " without second bag"
+        else ""
+      )
+    new CsvRecord(
+      datasetId,
+      uuid1,
+      uuid2,
+      datasetInfo.doi,
+      datasetInfo.depositor,
+      typePrefix + options.transformationType + typeSuffix,
+      comment,
+    )
   }
 }

@@ -15,17 +15,17 @@
  */
 package nl.knaw.dans.easy.fedoratobag.versions
 
+import com.yourmediashelf.fedora.client.FedoraClientException
 import nl.knaw.dans.easy.fedoratobag.{ DatasetId, FedoraProvider }
 import nl.knaw.dans.lib.error._
 import nl.knaw.dans.lib.logging.DebugEnhancedLogging
 
 import scala.collection.mutable
-import scala.util.{ Success, Try }
+import scala.util.{ Failure, Success, Try }
 import scala.xml.XML
 
-abstract class Versions() extends DebugEnhancedLogging {
+case class FedoraVersions(fedoraProvider: FedoraProvider) extends DebugEnhancedLogging {
   val resolver: Resolver = Resolver()
-  val fedoraProvider: FedoraProvider
 
   /* a submission date for each ID */
   private type Family = mutable.Map[DatasetId, Long]
@@ -42,7 +42,12 @@ abstract class Versions() extends DebugEnhancedLogging {
       _ <- ids
         .withFilter(!collectedIds.contains(_))
         .map(findVersions)
-        .find(_.isFailure)
+        .filter{
+          case Failure(e: FedoraClientException) if e.getStatus == 404 =>
+            logger.error(e.getMessage)
+            false
+          case _ => true
+        }.find(_.isFailure)
         .getOrElse(Success(()))
       chains = families.map(_.toSeq
         .sortBy { case (_, date) => date }
