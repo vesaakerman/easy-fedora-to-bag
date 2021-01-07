@@ -15,25 +15,19 @@
  */
 package nl.knaw.dans.easy.fedoratobag
 
-import java.io.{ IOException, InputStream }
-import java.nio.file.Paths
-import java.util.UUID
-
 import better.files.File.CopyOptions
 import better.files.{ File, StringExtensions }
 import cats.instances.list._
 import cats.instances.try_._
 import cats.syntax.traverse._
 import com.yourmediashelf.fedora.client.{ FedoraClient, FedoraClientException }
-import javax.naming.ldap.InitialLdapContext
 import nl.knaw.dans.bag.ChecksumAlgorithm
 import nl.knaw.dans.bag.v0.DansV0Bag
-import nl.knaw.dans.easy.fedoratobag.Command.{ FeedBackMessage, logger }
-import nl.knaw.dans.easy.fedoratobag.FileItem.{ checkNotImplemented, filesXml }
+import nl.knaw.dans.easy.fedoratobag.Command.FeedBackMessage
+import nl.knaw.dans.easy.fedoratobag.FileItem.{ checkNotImplementedFileMetadata, filesXml }
 import nl.knaw.dans.easy.fedoratobag.FoXml.{ getEmd, _ }
 import nl.knaw.dans.easy.fedoratobag.OutputFormat.OutputFormat
 import nl.knaw.dans.easy.fedoratobag.TransformationType._
-import nl.knaw.dans.easy.fedoratobag.filter.FileFilterType.{ LARGEST_IMAGE, _ }
 import nl.knaw.dans.easy.fedoratobag.filter._
 import nl.knaw.dans.lib.error._
 import nl.knaw.dans.lib.logging.DebugEnhancedLogging
@@ -42,6 +36,10 @@ import nl.knaw.dans.pf.language.emd.binding.EmdUnmarshaller
 import org.apache.commons.csv.CSVPrinter
 import org.joda.time.DateTime
 
+import java.io.{ IOException, InputStream }
+import java.nio.file.{ Path, Paths }
+import java.util.UUID
+import javax.naming.ldap.InitialLdapContext
 import scala.collection.JavaConverters._
 import scala.util.{ Failure, Success, Try }
 import scala.xml.{ Elem, Node }
@@ -105,15 +103,22 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
     val packageDir1 = configuration.stagingDir / packageUuid1.toString
     val packageDir2 = configuration.stagingDir / packageUuid2.toString
     val bagDir1 = bagDir(packageDir1)
+    val bagDir2 = bagDir(packageDir2)
+
+    def createSecondBag(datasetInfo: DatasetInfo) = {
+      if (datasetInfo.nextFileInfos.isEmpty) Success(None)
+      else for {
+        bag2 <- DansV0Bag.empty(bagDir2)
+        _ <- fillSecondBag(bag2, bagDir1 / "metadata", datasetInfo, packageUuid1)
+        _ <- movePackageAtomically(packageDir2, outputDir)
+      } yield Some(packageUuid2)
+    }
+
     val triedCsvRecord = for {
       datasetInfo <- createBag(datasetId, bagDir1, options)
-      maybeBagDir2 = if (datasetInfo.nextFileInfos.isEmpty) None
-                     else Some(bagDir(packageDir2))
-      _ <- maybeBagDir2.map(createSecondBag(datasetInfo, bagDir1, packageUuid1)).getOrElse(Success(()))
-      // the 2nd bag is moved first, thus a next process has a chance to stumble over a missing first bag in case of interrupts
-      _ <- maybeBagDir2.map(_ => movePackageAtomically(packageDir2, outputDir)).getOrElse(Success(()))
+      maybeUuid2 <- createSecondBag(datasetInfo)
+      // first bag moved after second, thus a next process can stumble over a missing first bag in case of interrupts
       _ <- movePackageAtomically(packageDir1, outputDir)
-      maybeUuid2 = maybeBagDir2.map(_ => packageUuid2)
       _ <- CsvRecord(datasetId, datasetInfo, packageUuid1, maybeUuid2, options).print(printer)
     } yield ()
     errorHandling(triedCsvRecord, printer, datasetId, packageUuid1)
@@ -138,33 +143,30 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
     }
   }
 
-  private def createSecondBag(datasetInfo: DatasetInfo, bagDir1: File, isVersionOf: UUID)(bagDir2: File): Try[Unit] = {
+  private def fillSecondBag(bag2: DansV0Bag, metadataOfBag1: File, datasetInfo: DatasetInfo, isVersionOf: UUID) = {
 
-    def copy(fileName: String, bag2: DansV0Bag) = {
-      (bagDir1 / "metadata" / fileName)
-        .inputStream
-        .map(addMetadataStreamTo(bag2, fileName))
-        .get
-    }
+    def copy(fileName: String) = (metadataOfBag1 / fileName)
+      .inputStream
+      .map(addMetadataStreamTo(bag2, fileName))
+      .get
 
-    def bagInfoTxt(bag: DansV0Bag) = bag
+    bag2
       .withEasyUserAccount(datasetInfo.depositor)
       .withCreated(DateTime.now())
       .withIsVersionOf(isVersionOf)
       // the following keys should match easy-fedora-to-bag
       .addBagInfo("Base-DOI", datasetInfo.doi)
       .addBagInfo("Base-URN", datasetInfo.urn)
-
     for {
-      bag2 <- DansV0Bag.empty(bagDir2).map(bagInfoTxt)
-      _ <- copy("emd.xml", bag2)
-      _ <- copy("amd.xml", bag2)
-      _ <- copy("dataset.xml", bag2)
-      _ <- (bagDir1 / "metadata").list.toList
+      _ <- copy("emd.xml")
+      _ <- copy("amd.xml")
+      _ <- copy("dataset.xml")
+      _ <- metadataOfBag1.list.toList
         .filter(_.name.toLowerCase.contains("license"))
-        .traverse(file => copy(file.name, bag2))
-      fileItems <- datasetInfo.nextFileInfos.toList.traverse(addPayloadFileTo(bag2))
-      _ <- checkNotImplemented(fileItems, logger)
+        .traverse(file => copy(file.name))
+      fileItems <- datasetInfo.nextFileInfos.toList
+        .traverse(addPayloadFileTo(bag2, isOriginalVersioned = true))
+      _ <- checkNotImplementedFileMetadata(fileItems, logger)
       _ <- addXmlMetadataTo(bag2, "files.xml")(filesXml(fileItems))
       _ <- bag2.save
     } yield ()
@@ -219,17 +221,19 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
         .getOrElse(Success(()))
       _ <- managedMetadataStream(foXml, "DATASET_LICENSE", bag, "depositor-info/depositor-agreement")
         .getOrElse(Success(()))
+      isOriginalVersioned = options.transformationType == ORIGINAL_VERSIONED
       allFileInfos <- fedoraIDs.filter(_.startsWith("easy-file:")).toList.traverse(getFileInfo)
-      firstFileInfos <- selectFileInfos(options.firstFileFilter(emdXml), allFileInfos)
-      firstBagFileItems <- firstFileInfos.traverse(addPayloadFileTo(bag))
-      _ <- checkNotImplemented(firstBagFileItems, logger)
-      _ <- addXmlMetadataTo(bag, "files.xml")(filesXml(firstBagFileItems))
+      fileInfosForSecondBag = allFileInfos.selectForSecondBag(isOriginalVersioned)
+      fileInfosForFirstBag <- allFileInfos.selectForFirstBag(emdXml, fileInfosForSecondBag.nonEmpty, options.europeana)
+      _ <- checkDuplicateFiles(fileInfosForFirstBag, fileInfosForSecondBag, isOriginalVersioned)
+      _ = logger.debug(s"nextFileInfos = ${ fileInfosForSecondBag.map(_.path) }")
+      fileItemsForFirstBag <- fileInfosForFirstBag.traverse(addPayloadFileTo(bag, isOriginalVersioned))
+      _ <- checkNotImplementedFileMetadata(fileItemsForFirstBag, logger)
+      _ <- addXmlMetadataTo(bag, "files.xml")(filesXml(fileItemsForFirstBag))
       _ <- bag.save
       doi = emd.getEmdIdentifier.getDansManagedDoi
       urn = getUrn(datasetId, emd)
-      nextFileInfos = if (maybeFilterViolations.nonEmpty && options.strict) Seq.empty
-                      else getNextFileInfos(allFileInfos, firstFileInfos, options.transformationType == ORIGINAL_VERSIONED)
-    } yield DatasetInfo(maybeFilterViolations, doi, urn, depositor, nextFileInfos)
+    } yield DatasetInfo(maybeFilterViolations, doi, urn, depositor, fileInfosForSecondBag)
   }
 
   private def getUrn(datasetId: DatasetId, emd: EasyMetadataImpl) = {
@@ -237,19 +241,6 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
       .find(_.getScheme == "PID")
       .map(_.getValue)
       .getOrElse(throw new Exception(s"no URN in EMD of $datasetId "))
-  }
-
-  private def getNextFileInfos(allFileInfos: List[FileInfo], firstFileInfos: List[FileInfo], originalVersioning: Boolean): Seq[FileInfo] = {
-    if (!originalVersioning || allFileInfos.size == firstFileInfos.size)
-      Seq[FileInfo]()
-    else {
-      // firstFileInfos are files of the first dataset in other words all original files
-      val notAccessibleOriginals = selectFileInfos(NOT_ACCESSIBLE, firstFileInfos).getOrElse(Seq.empty)
-      // all files minus not accessible originals -> accessible originals + the rest for the second dataset
-      val nextFileInfos = allFileInfos.toSet &~ notAccessibleOriginals.toSet
-      logger.debug(s"nextFileInfos = ${ nextFileInfos.map(_.path) }")
-      nextFileInfos.toSeq
-    }
   }
 
   private def getAudience(id: String) = {
@@ -270,38 +261,6 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
     bag.addTagFile(content.serialize.inputStream, Paths.get(s"metadata/depositor-info/agreements.xml"))
   }
 
-  private def selectFileInfos(fileFilterType: FileFilterType, fileInfos: List[FileInfo]): Try[List[FileInfo]] = {
-
-    def largest(by: FileFilterType, orElseBy: FileFilterType): Try[List[FileInfo]] = {
-      val infosByType = fileInfos
-        .filter(_.accessibleTo == "ANONYMOUS")
-        .groupBy(fi => if (fi.mimeType.startsWith("image/")) LARGEST_IMAGE
-                       else if (fi.mimeType.startsWith("application/pdf")) LARGEST_PDF
-                            else ALL_FILES
-        )
-      val selected = infosByType.getOrElse(by, infosByType.getOrElse(orElseBy, List.empty))
-      maxSizeUnlessEmpty(selected)
-    }
-
-    def maxSizeUnlessEmpty(selected: List[FileInfo]) = {
-      if (selected.isEmpty) Failure(NoPayloadFilesException())
-      else Success(List(selected.maxBy(_.size)))
-    }
-
-    def successUnlessEmpty(fileInfos: List[FileInfo]) = {
-      if (fileInfos.isEmpty) Failure(NoPayloadFilesException())
-      else Success(fileInfos)
-    }
-
-    fileFilterType match {
-      case LARGEST_PDF => largest(LARGEST_PDF, LARGEST_IMAGE)
-      case LARGEST_IMAGE => largest(LARGEST_IMAGE, LARGEST_PDF)
-      case ORIGINAL_FILES => successUnlessEmpty(fileInfos.filter(_.path.startsWith("original/")))
-      case NOT_ACCESSIBLE => successUnlessEmpty(fileInfos.filter(_.accessibleTo == "NONE"))
-      case ALL_FILES => successUnlessEmpty(fileInfos)
-    }
-  }
-
   private def getFileInfo(fedoraFileId: String): Try[FileInfo] = {
     fedoraProvider
       .loadFoXml(fedoraFileId)
@@ -311,36 +270,71 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
       }
   }
 
-  private def addPayloadFileTo(bag: DansV0Bag)(fileInfo: FileInfo): Try[Node] = {
-    val file = bag.baseDir / s"data/${ fileInfo.path }"
-    val streamId = "EASY_FILE"
+  private def checkDuplicateFiles(fileInfosForFirstBag: List[FileInfo], fileInfosForSecondBag: List[FileInfo], isOriginalVersioned: Boolean) = {
+    def findDuplicates(fileInfos: List[FileInfo]) = fileInfos
+      .groupBy(_.bagPath(isOriginalVersioned))
+      .filter(_._2.size > 1)
+      .mapValues(infos =>
+        infos.map(info =>
+          s"${ info.path }[${ info.fedoraFileId },${ info.maybeDigestValue.getOrElse("") }]"
+        ).mkString("[", ",", "]")
+      )
+
+    val duplicatesForFirstBag = findDuplicates(fileInfosForFirstBag)
+    val duplicatesForSecondBag = findDuplicates(fileInfosForSecondBag)
+    if (duplicatesForFirstBag.isEmpty && duplicatesForSecondBag.isEmpty) Success(())
+    else {
+      val prefix1 = "duplicates in first bag: "
+      val prefix2 = "duplicates in second bag: "
+      logDuplicates(prefix1, duplicatesForFirstBag)
+      logDuplicates(prefix2, duplicatesForSecondBag)
+      Failure(InvalidTransformationException(
+        s"$prefix1${ duplicatesForFirstBag.keys.mkString(", ") }; $prefix2${ duplicatesForSecondBag.keys.mkString(", ") } (isOriginalVersioned==$isOriginalVersioned)"
+      ))
+    }
+  }
+
+  private def logDuplicates(prefix: String, duplicates: Map[Path, String]): Unit = {
+    if (duplicates.nonEmpty)
+      logger.error(prefix + duplicates.values.mkString("; "))
+  }
+
+  private def addPayloadFileTo(bag: DansV0Bag, isOriginalVersioned: Boolean)(fileInfo: FileInfo): Try[Node] = {
+    val target = fileInfo.bagPath(isOriginalVersioned)
+    val file = bag.baseDir / "data" / target.toString
     for {
-      fileItem <- FileItem(fileInfo)
+      fileItem <- FileItem(fileInfo, isOriginalVersioned)
       _ <- fedoraProvider
-        .disseminateDatastream(fileInfo.fedoraFileId, streamId)
-        .map(bag.addPayloadFile(_, fileInfo.path))
+        .disseminateDatastream(fileInfo.fedoraFileId, streamId = "EASY_FILE")
+        .map(bag.addPayloadFile(_, target))
         .tried.flatten
-      _ <- fileInfo.contentDigest.map(validateChecksum(file, bag, fileInfo.fedoraFileId))
-        .getOrElse(Success(logger.warn(s"No digest found for ${ fileInfo.fedoraFileId } path = ${ fileInfo.path }")))
+      maybeBagChecksum = fileInfo.maybeDigestType.flatMap(getChecksum(file, bag))
+      _ <- verifyChecksums(file, fileInfo.maybeDigestValue, maybeBagChecksum)
     } yield fileItem
   }
 
-  private def validateChecksum(file: File, bag: DansV0Bag, fedoraFileId: String)(maybeDigest: Node) = Try {
+  private def verifyChecksums(file: File, fedoraValue: Option[String], bagValue: Option[String]) = {
+    (bagValue, fedoraValue) match {
+      case (Some(b), Some(f)) if f == b => Success(())
+      case (Some(_), Some(_)) => Failure(new Exception(
+        s"Different checksums in fedora $fedoraValue and exported bag $bagValue for $file"
+      ))
+      case _ => logger.warn(s"No checksum in fedora for $file")
+        Success(())
+    }
+  }
+
+  private def getChecksum(file: File, bag: DansV0Bag)(digestType: String): Option[String] = {
     val algorithms = Map(
       "SHA-1" -> ChecksumAlgorithm.SHA1,
       "MD-5" -> ChecksumAlgorithm.MD5,
       "SHA-256" -> ChecksumAlgorithm.SHA256,
       "SHA-256" -> ChecksumAlgorithm.SHA512,
     )
-    val digestType = (maybeDigest \\ "@TYPE").text
-    val digestValue = (maybeDigest \\ "@DIGEST").text
-    val checksum = (for {
+    for {
       algorithm <- algorithms.get(digestType)
       manifest <- bag.payloadManifests.get(algorithm)
       checksum <- manifest.get(file)
-    } yield checksum)
-      .getOrElse(throw new Exception(s"Could not find digest [$digestType/$digestValue] for $fedoraFileId $file in manifest"))
-    if (checksum != digestValue)
-      throw new Exception(s"checksum error fedora[$digestValue] bag[$checksum] $fedoraFileId $file")
+    } yield checksum
   }
 }

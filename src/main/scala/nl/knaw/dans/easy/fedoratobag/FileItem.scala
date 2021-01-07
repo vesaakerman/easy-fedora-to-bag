@@ -15,12 +15,11 @@
  */
 package nl.knaw.dans.easy.fedoratobag
 
-import java.util.Locale
-
 import com.typesafe.scalalogging.Logger
 
+import java.util.Locale
 import scala.util.{ Failure, Success, Try }
-import scala.xml.{ Elem, Node, NodeSeq, Text }
+import scala.xml._
 
 object FileItem {
 
@@ -36,7 +35,7 @@ object FileItem {
     { items }
     </files>
 
-  def checkNotImplemented(fileItems: List[Node], logger: Logger): Try[Unit] = {
+  def checkNotImplementedFileMetadata(fileItems: List[Node], logger: Logger): Try[Unit] = {
     val incompleteItems = fileItems.filter(item => (item \ "notImplemented").nonEmpty)
     incompleteItems.foreach(item =>
       (item \ "notImplemented").foreach(tag =>
@@ -52,9 +51,12 @@ object FileItem {
     else Failure(new Exception(s"${ incompleteItems.size } file(s) with not implemented additional file metadata: $tags"))
   }
 
-  def apply(fileInfo: FileInfo): Try[Node] = Try {
-      <file filepath={ "data/" + fileInfo.path }>
-        <dct:identifier>{ fileInfo.fedoraFileId }</dct:identifier>
+  def apply(fileInfo: FileInfo, isOriginalVersioned: Boolean): Try[Node] = Try {
+    val bagPath = fileInfo.bagPath(isOriginalVersioned)
+      <file filepath={ "data/" + fileInfo.bagPath(isOriginalVersioned) }>{
+          if (bagPath != fileInfo.path) Comment(fileInfo.path.toString)
+          else Text("")
+        }<dct:identifier>{ fileInfo.fedoraFileId }</dct:identifier>
         <dct:title>{ fileInfo.name }</dct:title>
         <dct:format>{ fileInfo.mimeType }</dct:format>
         <dct:extent>{ "%.1fMB".formatLocal(Locale.US, fileInfo.size / 1024 / 1024) }</dct:extent>

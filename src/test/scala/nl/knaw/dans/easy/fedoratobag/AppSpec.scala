@@ -15,20 +15,19 @@
  */
 package nl.knaw.dans.easy.fedoratobag
 
-import java.io.StringWriter
-import java.util.UUID
-
 import better.files.{ File, _ }
-import javax.naming.NamingEnumeration
-import javax.naming.directory.{ BasicAttributes, SearchControls, SearchResult }
-import javax.naming.ldap.InitialLdapContext
-import nl.knaw.dans.easy.fedoratobag.OutputFormat.SIP
+import nl.knaw.dans.easy.fedoratobag.OutputFormat.{ AIP, SIP }
 import nl.knaw.dans.easy.fedoratobag.TransformationType.ORIGINAL_VERSIONED
 import nl.knaw.dans.easy.fedoratobag.filter.{ BagIndex, InvalidTransformationException, SimpleDatasetFilter }
 import nl.knaw.dans.easy.fedoratobag.fixture._
 import org.scalamock.scalatest.MockFactory
 import resource.managed
 
+import java.io.StringWriter
+import java.util.UUID
+import javax.naming.NamingEnumeration
+import javax.naming.directory.{ BasicAttributes, SearchControls, SearchResult }
+import javax.naming.ldap.InitialLdapContext
 import scala.util.{ Failure, Success, Try }
 import scala.xml.XML
 
@@ -93,13 +92,24 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
       Options(SimpleDatasetFilter(), ORIGINAL_VERSIONED),
       SIP
     )(CsvRecord.csvFormat.print(sw)) shouldBe Success("no fedora/IO errors")
+
+    // post condition
+
     sw.toString should fullyMatch regex
       """easyDatasetId,uuid1,uuid2,doi,depositor,transformationType,comment
         |easy-dataset:17,.+,.+,10.17026/test-Iiib-z9p-4ywa,user001,original-versioned,OK
         |""".stripMargin
+
+    // post condition: the data folders of both bags have the same number of files as their files.xml
+
+    testDir.listRecursively.withFilter(_.name == "data").map(_.parent).foreach { bag =>
+      val nrOfFiles = (bag / "data").listRecursively.filterNot(_.isDirectory).size
+      (XML.loadFile((bag / "metadata" / "files.xml").toJava) \\ "file").theSeq.size shouldBe
+        nrOfFiles
+    }
   }
 
-  it should "produce a single bags" in {
+  it should "produce a single bag" in {
     val app = new AppWithMockedServices() {
       Map(
         "easy-discipline:77" -> audienceFoXML("easy-discipline:77", "D13200"),
@@ -165,8 +175,40 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
     )(CsvRecord.csvFormat.print(sw)) shouldBe Success("no fedora/IO errors")
     sw.toString should fullyMatch regex
       """easyDatasetId,uuid1,uuid2,doi,depositor,transformationType,comment
-        |easy-dataset:17,.+,,,,-,FAILED: java.lang.Exception: checksum error .* easy-file:35 .*/data/original/something.txt
+        |easy-dataset:17,.+,,,,-,FAILED: java.lang.Exception: Different checksums in fedora Some(.*) and exported bag Some(.*) for .*/data/original/something.txt
         |""".stripMargin
+  }
+
+  it should "report a duplicate file" in {
+    val app: AppWithMockedServices = new AppWithMockedServices() {
+      expectAUser()
+      Map(
+        "easy-dataset:13" -> XML.loadFile((sampleFoXML / "streaming.xml").toJava),
+        "easy-discipline:6" -> audienceFoXML("easy-discipline:6", "D35400"),
+        "easy-file:1" -> fileFoXml(id = 1, location = "original/a", name = "x.txt", digest = digests("acabadabra")),
+        "easy-file:2" -> fileFoXml(id = 2, location = "a", name = "x.txt", digest = digests("acabadabra")),
+        "easy-file:3" -> fileFoXml(id = 3, name = "y.txt", digest = digests("acabadabra")),
+        "easy-file:4" -> fileFoXml(id = 4, location = "a", name = "z.txt", digest = digests("lalala")),
+      ).foreach { case (id, xml) =>
+        (fedoraProvider.loadFoXml(_: String)) expects id once() returning Success(xml)
+      }
+      (fedoraProvider.getSubordinates(_: String)) expects "easy-dataset:13" once() returning
+        Success(Seq("easy-file:1", "easy-file:2", "easy-file:3", "easy-file:4"))
+    }
+
+    // end of mocking
+
+    val sw = new StringWriter()
+    app.createExport(
+      Iterator("easy-dataset:13"),
+      (testDir / "output").createDirectories(),
+      Options(app.filter, ORIGINAL_VERSIONED),
+      AIP
+    )(CsvRecord.csvFormat.print(sw)) shouldBe Success("no fedora/IO errors")
+
+    // post condition
+    sw.toString.split("\n").last should fullyMatch regex
+      s"easy-dataset:13,.*,,,,-,FAILED: .*InvalidTransformationException: duplicates in first bag: ; duplicates in second bag: a/x.txt .isOriginalVersioned==true."
   }
 
   "createBag" should "report not strict simple violation" in {
@@ -327,6 +369,34 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
       contain theSameElementsAs List("original", "c.txt", "b.txt", "a.txt")
   }
 
+  it should "report an invalid checksum" in {
+    val app: AppWithMockedServices = new AppWithMockedServices() {
+      expectAUser()
+      (fedoraProvider.getSubordinates(_: String)) expects "easy-dataset:13" once() returning
+        Success(Seq("easy-file:1"))
+      val foXMLs = Map(
+        "easy-dataset:13" -> XML.loadFile((sampleFoXML / "streaming.xml").toJava),
+        "easy-discipline:6" -> audienceFoXML("easy-discipline:6", "D35400"),
+        "easy-file:1" -> fileFoXml(id = 1, name = "a.txt", digest = digests("acabadabra")),
+      )
+      foXMLs.foreach { case (id, xml) =>
+        (fedoraProvider.loadFoXml(_: String)) expects id once() returning Success(xml)
+      }
+      (fedoraProvider.disseminateDatastream(_: String, _: String)
+        ) expects("easy-file:1", "EASY_FILE") once() returning managed("lalala".inputStream)
+    }
+
+    // end of mocking
+
+    val bagDir = testDir / "bags" / UUID.randomUUID.toString
+    val triedRecord = app.createBag("easy-dataset:13", bagDir, Options(app.filter))
+    triedRecord should matchPattern {
+      case Failure(e: Exception) if e.getMessage.matches(
+        "Different checksums in fedora Some(.*) and exported bag Some(.*) for .*/data/original/a.txt"
+      ) =>
+    }
+  }
+
   it should "export largest image as payload" in {
     val app: AppWithMockedServices = new AppWithMockedServices() {
       expectAUser()
@@ -413,7 +483,7 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
       Success(Vector("original/b.pdf", "original/c.pdf", "x/a.txt", "x/e.png"))
 
     (bagDir / "data").listRecursively.toList.map(_.name) should
-      contain theSameElementsAs List("original", "c.pdf", "b.pdf", "d.pdf")
+      contain theSameElementsAs List("c.pdf", "b.pdf", "d.pdf")
   }
 
   it should "cause NoPayloadFilesException" in {

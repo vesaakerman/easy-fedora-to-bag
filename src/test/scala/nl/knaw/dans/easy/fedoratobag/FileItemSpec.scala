@@ -39,7 +39,7 @@ class FileItemSpec extends TestSupportFixture with MockFactory with SchemaSuppor
                        <accessibleTo>RESTRICTED_REQUEST</accessibleTo>
 
     val triedFileItem = FileInfo(fileFoXml(fileMetadata))
-      .flatMap(FileItem(_))
+      .flatMap(FileItem(_, isOriginalVersioned = false))
       .map(trim)
     triedFileItem shouldBe Success(trim(
       <file filepath="data/original/something.txt">
@@ -63,7 +63,7 @@ class FileItemSpec extends TestSupportFixture with MockFactory with SchemaSuppor
                        <visibleTo>NONE</visibleTo>
 
     val triedFileItem = FileInfo(fileFoXml(fileMetadata))
-      .flatMap(FileItem(_))
+      .flatMap(FileItem(_, isOriginalVersioned = false))
       .map(trim)
     triedFileItem.map(trim) shouldBe Success(trim(
       <file filepath="data/original/something.txt">
@@ -86,7 +86,7 @@ class FileItemSpec extends TestSupportFixture with MockFactory with SchemaSuppor
                        <visibleTo>ANONYMOUS</visibleTo>
 
     FileInfo(fileFoXml(fileMetadata))
-      .flatMap(FileItem(_))
+      .flatMap(FileItem(_, isOriginalVersioned = false))
       .map(trim) should matchPattern {
       case Failure(e: Exception) if e.getMessage ==
         "<accessibleTo> not found" =>
@@ -128,7 +128,7 @@ class FileItemSpec extends TestSupportFixture with MockFactory with SchemaSuppor
     }
 
     val triedFileItem = FileInfo(fileFoXml(fileMetadata))
-      .flatMap(FileItem(_))
+      .flatMap(FileItem(_, isOriginalVersioned = false))
       .map(trim)
     triedFileItem.map(trim) shouldBe Success(trim(
       <file filepath="data/Fotos/R0011867.jpg">
@@ -184,7 +184,7 @@ class FileItemSpec extends TestSupportFixture with MockFactory with SchemaSuppor
     }
 
     val triedFileItem = FileInfo(fileFoXml(fileMetadata))
-      .flatMap(FileItem(_))
+      .flatMap(FileItem(_, isOriginalVersioned = false))
       .map(trim)
     triedFileItem.map(trim) shouldBe Success(trim(
       <file filepath="data/Fotos/R0011867.jpg">
@@ -203,7 +203,7 @@ class FileItemSpec extends TestSupportFixture with MockFactory with SchemaSuppor
     assume(schemaIsAvailable)
     triedFileItem.flatMap(validateItem) shouldBe Success(())
   }
-  
+
   it should "use file name as second title (first title from mandatory name)" in {
     val fileMetadata = {
       <name>SKKJ6_spoor.mix</name>
@@ -234,7 +234,7 @@ class FileItemSpec extends TestSupportFixture with MockFactory with SchemaSuppor
     // note that we have two times <dct:title>,
     // once from <name>, once from <addmd:additional-metadata><file_name>
     val triedFileItem = FileInfo(fileFoXml(fileMetadata))
-      .flatMap(FileItem(_))
+      .flatMap(FileItem(_, isOriginalVersioned = false))
       .map(trim)
     triedFileItem.map(trim) shouldBe Success(trim(
       <file filepath="data/GIS/SKKJ6_spoor.mif">
@@ -287,7 +287,7 @@ class FileItemSpec extends TestSupportFixture with MockFactory with SchemaSuppor
     }
 
     val triedFileItem = FileInfo(fileFoXml(fileMetadata))
-      .flatMap(FileItem(_))
+      .flatMap(FileItem(_, isOriginalVersioned = false))
       .map(trim)
     triedFileItem.map(trim) shouldBe Success(trim(
       <file filepath="data/B">
@@ -334,7 +334,7 @@ class FileItemSpec extends TestSupportFixture with MockFactory with SchemaSuppor
     }
 
     val triedFileItem = FileInfo(fileFoXml(fileMetadata))
-      .flatMap(FileItem(_))
+      .flatMap(FileItem(_, isOriginalVersioned = false))
       .map(trim)
     triedFileItem.map(trim) shouldBe Success(trim(
       <file filepath="data/B">
@@ -356,7 +356,7 @@ class FileItemSpec extends TestSupportFixture with MockFactory with SchemaSuppor
     ).foreach(s => (mockLogger.warn(_: String)) expects s once())
     (() => mockLogger.isWarnEnabled()) expects() anyNumberOfTimes() returning true
 
-    FileItem.checkNotImplemented(List(triedFileItem.get), Logger(mockLogger)) should matchPattern {
+    FileItem.checkNotImplementedFileMetadata(List(triedFileItem.get), Logger(mockLogger)) should matchPattern {
       case Failure(e) if e.getMessage == "1 file(s) with not implemented additional file metadata: List(original_file AND archival_name)" =>
     }
   }
@@ -387,7 +387,7 @@ class FileItemSpec extends TestSupportFixture with MockFactory with SchemaSuppor
     ).foreach(s => (mockLogger.warn(_: String)) expects s once())
     (() => mockLogger.isWarnEnabled()) expects() anyNumberOfTimes() returning true
 
-    FileItem.checkNotImplemented(items.toList, Logger(mockLogger)) should matchPattern {
+    FileItem.checkNotImplementedFileMetadata(items.toList, Logger(mockLogger)) should matchPattern {
       case Failure(e) if e.getMessage == "2 file(s) with not implemented additional file metadata: List(analytic_units, mapprojection, opmerkingen)" =>
     }
   }
