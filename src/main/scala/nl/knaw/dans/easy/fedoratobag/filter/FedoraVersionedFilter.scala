@@ -17,6 +17,7 @@ package nl.knaw.dans.easy.fedoratobag.filter
 
 import scala.xml.Node
 
-case class FedoraVersionedFilter() extends SimpleDatasetFilter {
+case class FedoraVersionedFilter()
+  extends SimpleDatasetFilter(allowOriginalAndOthers = true) {
   override def findDansRelations(ddm: Node): Seq[Node] = Seq.empty
 }

@@ -41,7 +41,7 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
     override lazy val fedoraProvider: FedoraProvider = mock[FedoraProvider]
     override lazy val ldapContext: InitialLdapContext = mock[MockedLdapContext]
     override lazy val bagIndex: BagIndex = mockBagIndexRespondsWith(body = "<result/>", code = 200)
-    val filter: SimpleDatasetFilter = SimpleDatasetFilter(bagIndex)
+    val filter: SimpleDatasetFilter = new SimpleDatasetFilter(targetIndex = bagIndex)
 
     def expectAUser(): Unit = {
       val result = mock[NamingEnumeration[SearchResult]]
@@ -89,7 +89,7 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
     app.createExport(
       Iterator("easy-dataset:17"),
       (testDir / "output").createDirectories,
-      Options(SimpleDatasetFilter(), ORIGINAL_VERSIONED),
+      Options(SimpleDatasetFilter(allowOriginalAndOthers = true), ORIGINAL_VERSIONED),
       SIP
     )(CsvRecord.csvFormat.print(sw)) shouldBe Success("no fedora/IO errors")
 
@@ -135,7 +135,7 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
     app.createExport(
       Iterator("easy-dataset:17"),
       (testDir / "output").createDirectories,
-      Options(SimpleDatasetFilter(), ORIGINAL_VERSIONED),
+      Options(new SimpleDatasetFilter(), ORIGINAL_VERSIONED),
       SIP
     )(CsvRecord.csvFormat.print(sw)) shouldBe Success("no fedora/IO errors")
     sw.toString should fullyMatch regex
@@ -202,7 +202,7 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
     app.createExport(
       Iterator("easy-dataset:13"),
       (testDir / "output").createDirectories(),
-      Options(app.filter, ORIGINAL_VERSIONED),
+      Options(SimpleDatasetFilter(allowOriginalAndOthers = true), ORIGINAL_VERSIONED),
       AIP
     )(CsvRecord.csvFormat.print(sw)) shouldBe Success("no fedora/IO errors")
 
@@ -319,7 +319,6 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
     )
 
     val app = new AppWithMockedServices() {
-      expectAUser()
       (fedoraProvider.getSubordinates(_: String)) expects "easy-dataset:13" once() returning
         Success(Seq("easy-file:35"))
       Map(
@@ -478,7 +477,7 @@ class AppSpec extends TestSupportFixture with FileFoXmlSupport with BagIndexSupp
     // end of mocking
 
     val bagDir = testDir / "bags" / UUID.randomUUID.toString
-    app.createBag("easy-dataset:13", bagDir, Options(app.filter, transformationType = ORIGINAL_VERSIONED))
+    app.createBag("easy-dataset:13", bagDir, Options(SimpleDatasetFilter(allowOriginalAndOthers = true), ORIGINAL_VERSIONED))
       .map(_.nextFileInfos.map(_.path.toString).sortBy(identity)) shouldBe
       Success(Vector("original/b.pdf", "original/c.pdf", "x/a.txt", "x/e.png"))
 
