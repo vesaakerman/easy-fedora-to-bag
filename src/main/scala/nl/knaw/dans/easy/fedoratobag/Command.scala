@@ -41,9 +41,9 @@ object Command extends App with DebugEnhancedLogging {
     .doIfFailure { case e => logger.error(e.getMessage, e) }
     .doIfFailure { case NonFatal(e) => println(s"FAILED: ${ e.getMessage }") }
 
-  private val europeana = commandLine.europeana()
-  private val transformationType = commandLine.transformation()
-  private val csvLogFile = commandLine.logFile()
+  private lazy val europeana = commandLine.europeana()
+  private lazy val transformationType = commandLine.transformation()
+  private lazy val csvLogFile = commandLine.logFile()
 
   private def runSubcommand(app: EasyFedoraToBagApp): Try[FeedBackMessage] = {
     lazy val isAip = commandLine.outputFormat.isSupplied && commandLine.outputFormat() == AIP
