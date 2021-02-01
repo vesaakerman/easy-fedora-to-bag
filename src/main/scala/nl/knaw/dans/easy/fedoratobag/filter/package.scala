@@ -15,7 +15,7 @@
  */
 package nl.knaw.dans.easy.fedoratobag
 
-import nl.knaw.dans.easy.fedoratobag.filter.FileFilterType._
+import nl.knaw.dans.easy.fedoratobag.filter.FileType._
 
 import scala.util.{ Failure, Success, Try }
 import scala.xml.Node
@@ -23,9 +23,10 @@ import scala.xml.Node
 package object filter {
   implicit class FileInfos(val fileInfos: List[FileInfo]) extends AnyVal {
     def selectForSecondBag(isOriginalVersioned: Boolean): List[FileInfo] = {
-      if (!isOriginalVersioned) List.empty
+      lazy val originals = fileInfos.filter(_.isOriginal)
+      if (!isOriginalVersioned || originals.isEmpty) List.empty
       else {
-        val accessibleOriginals = fileInfos.filter(_.isAccessibleOriginal)
+        val accessibleOriginals = originals.filter(_.isAccessibleOriginal)
         if (fileInfos.size == accessibleOriginals.size) List.empty
         else accessibleOriginals ++ fileInfos.filterNot(_.isOriginal)
       }
@@ -37,14 +38,14 @@ package object filter {
 
     def selectForFirstBag(emd: Node, hasSecondBag: Boolean, europeana: Boolean): Try[List[FileInfo]] = {
 
-      def largest(by: FileFilterType, orElseBy: FileFilterType): Try[List[FileInfo]] = {
+      def largest(preferred: FileType, alternative: FileType): Try[List[FileInfo]] = {
         val infosByType = fileInfos
           .filter(_.accessibleTo == "ANONYMOUS")
-          .groupBy(fi => if (fi.mimeType.startsWith("image/")) LARGEST_IMAGE
-                         else if (fi.mimeType.startsWith("application/pdf")) LARGEST_PDF
-                              else ALL_FILES
+          .groupBy(fi => if (fi.mimeType.startsWith("image/")) IMAGE
+                         else if (fi.mimeType.startsWith("application/pdf")) PDF
+                              else NEITHER_PDF_NOR_IMAGE
           )
-        val selected = infosByType.getOrElse(by, infosByType.getOrElse(orElseBy, List.empty))
+        val selected = infosByType.getOrElse(preferred, infosByType.getOrElse(alternative, List.empty))
         maxSizeUnlessEmpty(selected)
       }
 
@@ -58,16 +59,11 @@ package object filter {
         else Success(fileInfos)
       }
 
-      val fileFilterType = if (hasSecondBag) ORIGINAL_FILES
-                           else if (!europeana) ALL_FILES
-                                else if (dcmiType(emd) == "text") LARGEST_PDF
-                                     else LARGEST_IMAGE
-      fileFilterType match {
-        case LARGEST_PDF => largest(LARGEST_PDF, LARGEST_IMAGE)
-        case LARGEST_IMAGE => largest(LARGEST_IMAGE, LARGEST_PDF)
-        case ORIGINAL_FILES => successUnlessEmpty(fileInfos.filter(_.isOriginal)) // TODO is ALL_FILES if no second bag
-        case ALL_FILES => successUnlessEmpty(fileInfos)
-      }
+      if (hasSecondBag) successUnlessEmpty(fileInfos.filter(_.isOriginal))
+      else if (!europeana) successUnlessEmpty(fileInfos) // all files
+           else if (dcmiType(emd) == "text")
+                  largest(PDF, IMAGE)
+                else largest(IMAGE, PDF)
     }
   }
 
