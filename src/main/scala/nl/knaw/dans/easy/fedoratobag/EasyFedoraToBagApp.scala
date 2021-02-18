@@ -54,7 +54,7 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
   def createSequences(lines: Iterator[String], outputDir: File, options: Options)(printer: CSVPrinter): Try[FeedBackMessage] = {
     logger.info(options.toString)
 
-    def exportBag(firstVersion: Option[VersionInfo], datasetId: DatasetId): Try[VersionInfo] = {
+    def exportBag(firstVersion: Option[BagVersion], datasetId: DatasetId): Try[BagVersion] = {
       val packageUUID = UUID.randomUUID
       val packageDir = configuration.stagingDir / packageUUID.toString
       val csvUuid1 = firstVersion.map(_.packageId).getOrElse(packageUUID)
@@ -62,17 +62,17 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
       for {
         datasetInfo <- createBag(datasetId, packageDir / UUID.randomUUID.toString, options, firstVersion)
         _ <- movePackageAtomically(packageDir, outputDir)
-        thisVersionInfo = VersionInfo(datasetInfo, packageUUID)
+        thisVersionInfo = BagVersion(datasetInfo, packageUUID)
         _ <- CsvRecord(datasetId, datasetInfo, csvUuid1, csvUuid2, options).print(printer)
       } yield thisVersionInfo
     }
 
-    def exportWithRecover(firstVersion: VersionInfo)(datasetId: DatasetId): Try[Any] = {
+    def exportWithRecover(firstVersion: BagVersion)(datasetId: DatasetId): Try[Any] = {
       val tried = exportBag(Some(firstVersion), datasetId)
       errorHandling(tried, printer, datasetId, firstVersion.packageId)
     }
 
-    def exportSequence(datasetIds: Array[Depositor])(firstDatasetId: DatasetId) = for {
+    def exportSequence(datasetIds: Array[DatasetId])(firstDatasetId: DatasetId) = for {
       versionInfo <- exportBag(None, firstDatasetId)
       _ <- datasetIds
         .map(exportWithRecover(versionInfo))
@@ -89,8 +89,8 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
     }.failFastOr(Success("no fedora/IO errors"))
   }
 
-  def createExport(input: Iterator[DatasetId], outputDir: File, options: Options, outputFormat: OutputFormat)
-                  (printer: CSVPrinter): Try[FeedBackMessage] = input.map { datasetId =>
+  def createOriginalVersionedExport(input: Iterator[DatasetId], outputDir: File, options: Options, outputFormat: OutputFormat)
+                                   (printer: CSVPrinter): Try[FeedBackMessage] = input.map { datasetId =>
     logger.info(options.toString)
 
     def bagDir(packageDir: File) = outputFormat match {
@@ -106,10 +106,13 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
     val bagDir2 = bagDir(packageDir2)
 
     def createSecondBag(datasetInfo: DatasetInfo) = {
-      if (datasetInfo.nextFileInfos.isEmpty) Success(None)
+      if (datasetInfo.nextBagFileInfos.isEmpty) Success(None)
       else for {
         bag2 <- DansV0Bag.empty(bagDir2)
-        _ <- fillSecondBag(bag2, bagDir1 / "metadata", datasetInfo, packageUuid1)
+        _ = bag2.withEasyUserAccount(datasetInfo.depositor).withCreated(DateTime.now())
+        _ = BagVersion(datasetInfo.doi, datasetInfo.urn, packageUuid1)
+          .addTo(bag2)
+        _ <- fillSecondBag(bag2, bagDir1 / "metadata", datasetInfo.nextBagFileInfos.toList)
         _ <- movePackageAtomically(packageDir2, outputDir)
       } yield Some(packageUuid2)
     }
@@ -143,20 +146,13 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
     }
   }
 
-  private def fillSecondBag(bag2: DansV0Bag, metadataOfBag1: File, datasetInfo: DatasetInfo, isVersionOf: UUID) = {
+  private def fillSecondBag(bag2: DansV0Bag, metadataOfBag1: File, fileInfos: List[FileInfo]) = {
 
     def copy(fileName: String) = (metadataOfBag1 / fileName)
       .inputStream
       .map(addMetadataStreamTo(bag2, fileName))
       .get
 
-    bag2
-      .withEasyUserAccount(datasetInfo.depositor)
-      .withCreated(DateTime.now())
-      .withIsVersionOf(isVersionOf)
-      // the following keys should match easy-fedora-to-bag
-      .addBagInfo("Base-DOI", datasetInfo.doi)
-      .addBagInfo("Base-URN", datasetInfo.urn)
     for {
       _ <- copy("emd.xml")
       _ <- copy("amd.xml")
@@ -164,7 +160,7 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
       _ <- metadataOfBag1.list.toList
         .filter(_.name.toLowerCase.contains("license"))
         .traverse(file => copy(file.name))
-      fileItems <- datasetInfo.nextFileInfos.toList
+      fileItems <- fileInfos
         .traverse(addPayloadFileTo(bag2, isOriginalVersioned = true))
       _ <- checkNotImplementedFileMetadata(fileItems, logger)
       _ <- addXmlMetadataTo(bag2, "files.xml")(filesXml(fileItems))
@@ -172,7 +168,7 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
     } yield ()
   }
 
-  def createBag(datasetId: DatasetId, bagDir: File, options: Options, firstVersionInfo: Option[VersionInfo] = None): Try[DatasetInfo] = {
+  def createBag(datasetId: DatasetId, bagDir: File, options: Options, maybeFirstBagVersion: Option[BagVersion] = None): Try[DatasetInfo] = {
 
     def managedMetadataStream(foXml: Elem, streamId: String, bag: DansV0Bag, metadataFile: String) = {
       managedStreamLabel(foXml, streamId)
@@ -201,7 +197,7 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
       _ = logger.info(s"Creating $bagDir from $datasetId with owner $depositor")
       bag <- DansV0Bag.empty(bagDir)
       _ = bag.withEasyUserAccount(depositor).withCreated(DateTime.now())
-      _ = firstVersionInfo.map(_.addVersionOf(bag))
+      _ = maybeFirstBagVersion.map(_.addTo(bag))
       _ <- addXmlMetadataTo(bag, "emd.xml")(emdXml)
       _ <- addXmlMetadataTo(bag, "amd.xml")(amd)
       _ <- getDdm(foXml)
@@ -244,6 +240,7 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
   }
 
   private def getAudience(id: String) = {
+    // TODO cash, or does the fedoraClient that for us?
     fedoraProvider.loadFoXml(id).map(foXml =>
       (foXml \\ "discipline-md" \ "OICode").text
     )

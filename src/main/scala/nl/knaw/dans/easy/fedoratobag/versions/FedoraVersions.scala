@@ -67,23 +67,24 @@ case class FedoraVersions(fedoraProvider: FedoraProvider) extends DebugEnhancedL
         family.keySet.intersect(connections.toSet).nonEmpty
       ) // not inline: changing while searching might require a specific order
       connectedWith.foreach { oldFamily =>
+        logger.info(s"$startDatasetId family merged with $oldFamily")
         families -= oldFamily
         family ++= oldFamily
       }
     }
 
-    def readVersionInfo(anyId: String): Try[VersionInfo] = for {
+    def readVersionInfo(anyId: String): Try[EmdVersionInfo] = for {
       datasetId <- resolver.getDatasetId(anyId)
       emd <- fedoraProvider
         .datastream(datasetId, "EMD")
         .map(XML.load)
         .tried
-      versionInfo <- VersionInfo(emd)
+      versionInfo <- EmdVersionInfo(emd)
       _ = family += datasetId -> versionInfo.submitted
       _ = collectedIds ++= (versionInfo.self :+ datasetId).distinct
     } yield versionInfo
 
-    def follow(ids: Seq[String], f: VersionInfo => Seq[String]): Try[Unit] = {
+    def follow(ids: Seq[String], f: EmdVersionInfo => Seq[String]): Try[Unit] = {
       val grouped = ids.groupBy(collectedIds.contains(_))
 
       connections ++= grouped.get(true).toSeq.flatten
@@ -94,6 +95,7 @@ case class FedoraVersions(fedoraProvider: FedoraProvider) extends DebugEnhancedL
       grouped.get(false).toSeq.flatten.map { id =>
         for {
           versionInfo <- readVersionInfo(id)
+          _ = logger.info(s"$startDatasetId following $versionInfo")
           _ <- follow(f(versionInfo), f)
         } yield ()
       }.find(_.isFailure).getOrElse(Success(()))
@@ -101,26 +103,27 @@ case class FedoraVersions(fedoraProvider: FedoraProvider) extends DebugEnhancedL
 
     def log(): Unit = {
       val msg = family.mkString(
-        "Family: ",
+        s"$startDatasetId Family[${ family.size }]: ",
         ", ",
-        if (connections.isEmpty) ""
-        else connections.mkString(
-          s" [${ family.size }] Connections: ",
+        connections.mkString(
+          s" Connections[${ connections.size }]: ",
           ", ",
           ""
         )
       )
       if (family.values.exists(_ <= 0))
         logger.warn(msg)
-      else logger.info(msg) // default dates: before 1970
+      else logger.info(msg)
     }
 
     for {
-      versionInfo <- readVersionInfo(startDatasetId)
-      _ <- follow(versionInfo.previous, _.previous)
-      _ <- follow(versionInfo.next, _.next)
+      emdVersionInfo <- readVersionInfo(startDatasetId)
+      _ = logger.info(s"$startDatasetId $emdVersionInfo")
+      _ <- follow(emdVersionInfo.previous, _.previous)
+      _ <- follow(emdVersionInfo.next, _.next)
       _ = log()
       _ = if (connections.nonEmpty) connect()
+      _ = logger.info(s"$startDatasetId new family $family")
       _ = families += family
     } yield connections
   }

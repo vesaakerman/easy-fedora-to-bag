@@ -15,15 +15,18 @@
  */
 package nl.knaw.dans.easy.fedoratobag.versions
 
+import better.files.File
 import nl.knaw.dans.easy.fedoratobag.fixture.TestSupportFixture
 import org.joda.time.DateTime
 
+import scala.reflect.runtime.universe.Try
 import scala.util.Success
+import scala.xml.XML
 
-class VersionInfoSpec extends TestSupportFixture {
+class EmdVersionSpec extends TestSupportFixture {
   "apply" should "return all types of identifiers" in {
-    VersionInfo(
-      <emd:easymetadata xmlns:eas={ VersionInfo.easNameSpace }>
+    EmdVersionInfo(
+      <emd:easymetadata xmlns:eas={ EmdVersionInfo.easNameSpace }>
         <emd:identifier>
           <dc:identifier eas:scheme="PID">urn:nbn:nl:ui:13-t3f-cz8</dc:identifier>
           <dc:identifier eas:scheme="DOI">10.17026/dans-zjf-522e</dc:identifier>
@@ -44,7 +47,7 @@ class VersionInfoSpec extends TestSupportFixture {
         </emd:relation>
       </emd:easymetadata>
     ) should matchPattern {
-      case Success(VersionInfo(
+      case Success(EmdVersionInfo(
       _,
       Seq("urn:nbn:nl:ui:13-t3f-cz8", "10.17026/dans-zjf-522e", "easy-dataset:34340"),
       Seq("easy-dataset:123"),
@@ -53,18 +56,18 @@ class VersionInfoSpec extends TestSupportFixture {
     }
   }
   it should "use a default Date" in {
-    VersionInfo(<emd:easymetadata/>)
+    EmdVersionInfo(<emd:easymetadata/>)
       .map(submitYear) shouldBe Success(1900)
   }
   it should "fall back to a default Date" in {
-    VersionInfo(
+    EmdVersionInfo(
       <emd:easymetadata>
         <emd:date><eas:dateSubmitted>blablabla</eas:dateSubmitted></emd:date>
       </emd:easymetadata>
     ).map(submitYear) shouldBe Success(1970)
   }
   it should "use dateSubmitted" in {
-    VersionInfo(
+    EmdVersionInfo(
       <emd:easymetadata>
         <emd:date><eas:dateCreated>1980</eas:dateCreated></emd:date>
         <emd:date><eas:dateSubmitted>1990</eas:dateSubmitted></emd:date>
@@ -72,7 +75,7 @@ class VersionInfoSpec extends TestSupportFixture {
     ).map(submitYear) shouldBe Success(1990)
   }
   it should "fall back to date created" in {
-    VersionInfo(
+    EmdVersionInfo(
       <emd:easymetadata>
         <emd:date><eas:date>1980</eas:date></emd:date>
         <emd:date><dc:created>1980</dc:created></emd:date>
@@ -80,7 +83,7 @@ class VersionInfoSpec extends TestSupportFixture {
     ).map(submitYear) shouldBe Success(1980)
   }
 
-  private def submitYear(l: VersionInfo) = {
+  private def submitYear(l: EmdVersionInfo) = {
     new DateTime(l.submitted).getYear
   }
 }

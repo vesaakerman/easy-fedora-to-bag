@@ -22,25 +22,27 @@ import org.joda.time.format.DateTimeFormat.forPattern
 import scala.util.Try
 import scala.xml.{ Elem, Node }
 
-case class VersionInfo(submitted: Long,
-                       self: Seq[String],
-                       previous: Seq[String],
-                       next: Seq[String],
-                      )
+case class EmdVersionInfo(submitted: Long,
+                          self: Seq[String],
+                          previous: Seq[String],
+                          next: Seq[String],
+                         ) {
+  override def toString = s"EmdVersionInfo: ${new DateTime(submitted)}; self=${self.mkString("(",",",")")}; previous=${previous.mkString("(",",",")")}; next=${next.mkString("(",",",")")}"
+}
 
-object VersionInfo {
-  def apply(emd: Elem): Try[VersionInfo] = Try {
+object EmdVersionInfo {
+  def apply(emd: Elem): Try[EmdVersionInfo] = Try {
     val relations = emd \ "relation"
     val dateContainer = emd \ "date"
     val date = (dateContainer \ "dateSubmitted").headOption
       .getOrElse(dateContainer \ "created").headOption
       .map(_.text)
       .getOrElse("1900-01-01")
-    new VersionInfo(
-      fixDateIfTooLarge(date).getOrElse(0),
-      (emd \ "identifier" \ "identifier").theSeq.filter(isSelf).map(_.text),
-      getDansIDs((relations \ "replaces").theSeq ++ (relations \ "isVersionOf").theSeq),
-      getDansIDs((relations \ "replacedBy").theSeq ++ (relations \ "hasVersion").theSeq),
+    new EmdVersionInfo(
+      submitted = fixDateIfTooLarge(date).getOrElse(0),
+      self = (emd \ "identifier" \ "identifier").filter(isSelf).map(_.text),
+      previous = getDansIDs((relations \ "replaces") ++ (relations \ "isVersionOf")),
+      next = getDansIDs((relations \ "replacedBy") ++ (relations \ "hasVersion")),
     )
   }
 
@@ -57,7 +59,8 @@ object VersionInfo {
       .attribute(easNameSpace, "scheme")
       .map(_.text)
       .getOrElse("")
-    Seq("PID", "DMO_ID", "DOI").exists(scheme.contains)
+    val bool = scheme.matches("(PID|DMO_ID|DOI)")
+    bool
   }
 
   private def getDansIDs(relations: Seq[Node]) = {
