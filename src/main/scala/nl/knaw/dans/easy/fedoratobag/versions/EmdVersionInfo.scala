@@ -42,7 +42,7 @@ object EmdVersionInfo {
       submitted = fixDateIfTooLarge(date).getOrElse(0),
       self = (emd \ "identifier" \ "identifier").filter(isSelf).map(_.text),
       previous = getDansIDs((relations \ "replaces") ++ (relations \ "isVersionOf")),
-      next = getDansIDs((relations \ "replacedBy") ++ (relations \ "hasVersion")),
+      next = getDansIDs((relations \ "isReplacedBy") ++ (relations \ "hasVersion")),
     )
   }
 

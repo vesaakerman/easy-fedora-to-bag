@@ -76,7 +76,7 @@ class FedoraVersionsSpec extends TestSupportFixture with MockFactory {
         <emd:easymetadata xmlns:eas={ EmdVersionInfo.easNameSpace }>
           <emd:identifier><dc:identifier eas:scheme="DMO_ID">easy-dataset:2</dc:identifier></emd:identifier>
           <emd:date><eas:dateSubmitted>2019-12-23</eas:dateSubmitted></emd:date>
-          <emd:relation><dct:replacedBy>https://doi.org/10.17026/dans-zjf-522e</dct:replacedBy></emd:relation>
+          <emd:relation><dct:isReplacedBy>https://doi.org/10.17026/dans-zjf-522e</dct:isReplacedBy></emd:relation>
           <emd:relation><dct:isVersionOf>easy-dataset:3</dct:isVersionOf></emd:relation>
         </emd:easymetadata>,
       "easy-dataset:3" ->
