@@ -42,6 +42,13 @@ case class FileInfo(fedoraFileId: String,
 }
 
 object FileInfo {
+  val nonAllowedCharacters = List(':', '*', '?', '"', '<', '>', '|', ';', '#')
+
+  def replaceNonAllowedCharacters(s: String): String = {
+    s.map(char => if (nonAllowedCharacters.contains(char)) '_'
+                  else char)
+  }
+
   def apply(foXml: Node): Try[FileInfo] = {
     FoXml.getFileMD(foXml).map { fileMetadata =>
       def get(tag: String) = (fileMetadata \\ tag)
@@ -57,8 +64,8 @@ object FileInfo {
 
       new FileInfo(
         foXml \@ "PID",
-        Paths.get(get("path")),
-        get("name"),
+        Paths.get(replaceNonAllowedCharacters(get("path"))),
+        replaceNonAllowedCharacters(get("name")),
         get("size").toLong,
         get("mimeType"),
         accessibleTo,
