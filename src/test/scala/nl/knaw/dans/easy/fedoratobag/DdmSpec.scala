@@ -148,7 +148,6 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
     triedDDM.flatMap(validate) shouldBe Success(())
   }
 
-
   "titles" should "have an overflow in dcmiMetadata titles" in {
     val emd = parseEmdContent(Seq(
       <emd:title>
@@ -1236,7 +1235,6 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
       emdTitle, emdCreator, emdDescription,
           <emd:date>
               <dct:created>2013-03</dct:created>
-              <dct:available>2013-04</dct:available>
               <eas:created eas:scheme="W3CDTF" eas:format="DAY">2017-09-30T00:00:00.000+02:00</eas:created>
               <eas:created eas:scheme="W3CDTF" eas:format="MONTH">1901-04-01T00:00:00.000+00:19:32</eas:created>
           </emd:date>,
@@ -1250,7 +1248,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
           <dct:description>YYY</dct:description>
           { ddmCreator }
           <ddm:created>2013-03</ddm:created>
-          <ddm:available>2013-04</ddm:available>
+          <ddm:available>2013-03</ddm:available>
           <ddm:audience>D35400</ddm:audience>
           <ddm:accessRights>OPEN_ACCESS</ddm:accessRights>
         </ddm:profile>
@@ -1263,6 +1261,38 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
     ))
     assume(schemaIsAvailable)
     triedDDM.flatMap(validate) shouldBe Success(())
+  }
+
+  it should "convert with missing created date but validation fails" in {
+    val emd = parseEmdContent(Seq(
+      emdTitle, emdCreator, emdDescription,
+      <emd:date>
+          <dct:available>2013-04</dct:available>
+      </emd:date>,
+      emdRights,
+    ))
+    val triedDDM = DDM(emd, Seq("D35400"), abrMapping)
+    triedDDM.map(normalized) shouldBe Success(normalized(
+      <ddm:DDM xsi:schemaLocation={ schemaLocation }>
+        <ddm:profile>
+          <dc:title>XXX</dc:title>
+          <dct:description>YYY</dct:description>
+          { ddmCreator }
+          <ddm:available>2013-04</ddm:available>
+          <ddm:audience>D35400</ddm:audience>
+          <ddm:accessRights>OPEN_ACCESS</ddm:accessRights>
+        </ddm:profile>
+        <ddm:dcmiMetadata>
+          <dct:license xsi:type="dct:URI">{ DDM.cc0 }</dct:license>
+        </ddm:dcmiMetadata>
+      </ddm:DDM>
+    ))
+    assume(schemaIsAvailable)
+    triedDDM.flatMap(validate) should matchPattern {
+      case Failure(e) if e.getMessage
+        .contains("Invalid content was found starting with element 'ddm:available'") && e.getMessage
+        .contains(":created}' is expected") =>
+    }
   }
 
   it should "render an invalid number of dates available" in {
@@ -1329,8 +1359,7 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
           </emd:date>,
       emdRights,
     ))
-    val triedDDM = DDM(emd, Seq("D35400"), abrMapping)
-    triedDDM.map(normalized) shouldBe Success(normalized(
+    val expected = {
       <ddm:DDM xsi:schemaLocation={ schemaLocation }>
         <ddm:profile>
           <dc:title>XXX</dc:title>
@@ -1362,7 +1391,53 @@ class DdmSpec extends TestSupportFixture with EmdSupport with AudienceSupport wi
           <dct:license xsi:type="dct:URI">{ DDM.cc0 }</dct:license>
         </ddm:dcmiMetadata>
       </ddm:DDM>
+    }
+    val triedDDM = DDM(emd, Seq("D35400"), abrMapping)
+    triedDDM shouldBe a[Success[_]]
+    triedDDM.map(normalized(_).split("\n")).getOrElse(fail("not expecting a failure")) should
+      contain theSameElementsAs normalized(expected).split("\n")
+    assume(schemaIsAvailable)
+    triedDDM.flatMap(validate) shouldBe Success(())
+  }
+
+  it should "convert periods" in {
+    val emd = parseEmdContent(Seq(
+      emdTitle, emdCreator, emdDescription,
+          <emd:date>
+              <dc:date>gisteren tot vandaag</dc:date>
+              <dc:date>11-2013 - 11-2014</dc:date>
+              <dc:date>2013 - 2014</dc:date>
+              <dct:created>2013-03-01 to 2014-03</dct:created>
+              <dct:available>2013-03 through 2014-03-01</dct:available>
+          </emd:date>,
+      emdRights,
     ))
+    val expected = {
+      <ddm:DDM xsi:schemaLocation={ schemaLocation }>
+        <ddm:profile>
+          <dc:title>XXX</dc:title>
+          <dct:description>YYY</dct:description>
+          { ddmCreator }
+          <ddm:created>2014-03</ddm:created>
+          <ddm:available>2014-03-01</ddm:available>
+          <ddm:audience>D35400</ddm:audience>
+          <ddm:accessRights>OPEN_ACCESS</ddm:accessRights>
+        </ddm:profile>
+        <ddm:dcmiMetadata>
+          <dct:date>gisteren tot vandaag</dct:date>
+          <dct:date>11-2013 - 11-2014</dct:date>
+          <dct:date>2014</dct:date>
+          <ddm:datesOfCollection>2013/2014</ddm:datesOfCollection>
+          <ddm:datesOfCollection>2013-03/2014-03-01</ddm:datesOfCollection>
+          <ddm:datesOfCollection>2013-03-01/2014-03</ddm:datesOfCollection>
+          <dct:license xsi:type="dct:URI">{ DDM.cc0 }</dct:license>
+        </ddm:dcmiMetadata>
+      </ddm:DDM>
+    }
+    val triedDDM = DDM(emd, Seq("D35400"), abrMapping)
+    triedDDM shouldBe a[Success[_]]
+    triedDDM.map(normalized(_).split("\n")).getOrElse(fail("not expecting a failure")) should
+      contain theSameElementsAs normalized(expected).split("\n")
     assume(schemaIsAvailable)
     triedDDM.flatMap(validate) shouldBe Success(())
   }

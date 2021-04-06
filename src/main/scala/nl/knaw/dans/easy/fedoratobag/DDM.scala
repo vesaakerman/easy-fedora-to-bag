@@ -16,9 +16,9 @@
 package nl.knaw.dans.easy.fedoratobag
 
 import nl.knaw.dans.common.lang.dataset.AccessCategory._
+import nl.knaw.dans.easy.fedoratobag.DateMap.isOtherDate
 import nl.knaw.dans.lib.logging.DebugEnhancedLogging
 import nl.knaw.dans.lib.string._
-import nl.knaw.dans.pf.language.emd.types.EmdConstants.DateScheme
 import nl.knaw.dans.pf.language.emd.types._
 import nl.knaw.dans.pf.language.emd.{ EasyMetadataImpl, EmdRights }
 
@@ -36,11 +36,11 @@ object DDM extends DebugEnhancedLogging {
   def apply(emd: EasyMetadataImpl, audiences: Seq[String], abrMapping: AbrMappings): Try[Elem] = Try {
     //    println(new EmdMarshaller(emd).getXmlString)
 
-    val dateMap: Map[String, Iterable[Elem]] = getDateMap(emd)
-    val dateCreated = dateMap("created").map(_.text)
+    val dateMap: Map[String, Seq[Elem]] = DateMap(emd)
+    val dateCreated = dateMap("dct:created").map(_.text)
     val dateAvailable = {
-      val elems = dateMap("available").map(_.text)
-      if (elems.isEmpty) dateCreated
+      val elems = dateMap("dct:available").map(_.text)
+      if (elems.isEmpty) dateCreated.headOption.toSeq
       else elems
     }
    <ddm:DDM
@@ -61,7 +61,7 @@ object DDM extends DebugEnhancedLogging {
        { /* instructions for reuse not specified as such in EMD */ }
        { emd.getEmdCreator.getDcCreator.asScala.map(bs => <dc:creator>{ bs.getValue.trim }</dc:creator>) }
        { emd.getEmdCreator.getEasCreator.asScala.map(author => <dcx-dai:creatorDetails>{ toXml(author)} </dcx-dai:creatorDetails>) }
-       { if (dateCreated.nonEmpty)  <ddm:created>{ dateCreated.toSeq.head }</ddm:created> }
+       { dateCreated.headOption.toSeq.map(str => <ddm:created>{ str }</ddm:created>) }
        { dateAvailable.map(date =>  <ddm:available>{ date }</ddm:available>) }
        { audiences.map(code => <ddm:audience>{ code }</ddm:audience>) }
        <ddm:accessRights>{ emd.getEmdRights.getAccessCategory }</ddm:accessRights>
@@ -87,11 +87,11 @@ object DDM extends DebugEnhancedLogging {
        { emd.getEmdCoverage.getDcCoverage.asScala.map(bs => <dct:coverage xml:lang={ lang(bs) }>{ bs.getValue.trim }</dct:coverage>) }
        { emd.getEmdCoverage.getTermsSpatial.asScala.map(bs => <dct:spatial xml:lang={ lang(bs) } xsi:type={ xsiType(bs) }>{ bs.getValue.trim }</dct:spatial>) }
        { emd.getEmdCoverage.getTermsTemporal.asScala.map(toXml("temporal", abrMapping.temporal)) }
-       { dateMap.filter(isOtherDate).map { case (key, values) => values.map(_.withLabel(dateLabel(key))) } }
+       { dateMap.filter(isOtherDate).map { case (key, values) => values.map(_.withLabel(key)) } }
        { emd.getEmdCoverage.getEasSpatial.asScala.map(toXml) }
        <dct:license xsi:type="dct:URI">{ toLicenseUrl(emd.getEmdRights) }</dct:license>
        { emd.getEmdLanguage.getDcLanguage.asScala.map(bs => <dct:language xsi:type={langType(bs)}>{ langValue(bs) }</dct:language>) }
-       { dateCreated.toSeq.drop(1).map(date => <dct:created>{ date }</dct:created>) }
+       { dateCreated.drop(1).map(date => <dct:created>{ date }</dct:created>) }
      </ddm:dcmiMetadata>
    </ddm:DDM>
  }
@@ -281,41 +281,9 @@ object DDM extends DebugEnhancedLogging {
     </LinearRing>
   }
 
-  private def toXml(value: IsoDate): Elem = <label xsi:type={ orNull(value.getScheme) }>{ fixDate(value) }</label>
-
-  private def toXml(value: BasicDate): Elem = <label xsi:type={ orNull(value.getScheme) }>{ value }</label>
-
-  def orNull(dateScheme: DateScheme): String = Option(dateScheme).map("dct:" + _.toString).orNull
-
   private def optional(s: String) = Option(s).filterNot(_.trim.isEmpty)
 
   def orNull(s: String): String = optional(s).orNull
-
-  private def isOtherDate(kv: (String, Iterable[Elem])): Boolean = !Seq("created", "available").contains(kv._1)
-
-  private def dateLabel(key: String): String = key.toOption.map("dct:" + _).getOrElse("dct:date")
-
-  private def getDateMap(emd: EasyMetadataImpl): Map[DatasetId, Seq[Elem]] = {
-    val basicDates = emd.getEmdDate.getAllBasicDates.asScala.map { case (key, values) => key -> values.asScala.map(toXml) }
-    val isoDates = emd.getEmdDate.getAllIsoDates.asScala.map { case (key, values) => key -> values.asScala.map(toXml) }
-    (basicDates.toSeq ++ isoDates.toSeq)
-      .groupBy(_._1)
-      .mapValues(_.flatMap(_._2))
-  }
-
-  private def fixDate(date: IsoDate) = {
-    val year = date.getValue.getYear
-    if (year <= 9999) date
-    else {
-      // some dates where stored as yyyymmdd-01-01
-      val dateTime = date.getValue
-        .withYear(year / 10000)
-        .withMonthOfYear(year % 10000 / 100)
-        .withDayOfMonth(year % 100)
-      date.setValue(dateTime)
-      date
-    }
-  }.toString.replaceAll("[+]([0-9][0-9])([0-9][0-9])", "+$1:$2") // fix time zone
 
   private def toRelationXml(key: String, rel: Relation): Elem = Try {
     {
