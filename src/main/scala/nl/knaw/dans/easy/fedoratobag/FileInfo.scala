@@ -15,9 +15,11 @@
  */
 package nl.knaw.dans.easy.fedoratobag
 
-import java.nio.file.{ Path, Paths }
+import nl.knaw.dans.easy.fedoratobag.filter.InvalidTransformationException
+import nl.knaw.dans.lib.logging.DebugEnhancedLogging
 
-import scala.util.Try
+import java.nio.file.{ Path, Paths }
+import scala.util.{ Failure, Success, Try }
 import scala.xml.Node
 
 case class FileInfo(fedoraFileId: String,
@@ -41,7 +43,7 @@ case class FileInfo(fedoraFileId: String,
     else path
 }
 
-object FileInfo {
+object FileInfo extends DebugEnhancedLogging {
   val nonAllowedCharacters = List(':', '*', '?', '"', '<', '>', '|', ';', '#')
 
   def replaceNonAllowedCharacters(s: String): String = {
@@ -74,5 +76,57 @@ object FileInfo {
         (fileMetadata \ "additional-metadata" \ "additional" \ "content").headOption
       )
     }
+  }
+
+  /**
+   * @param selectedForSecondBag will be empty if isOriginalVersioned is false
+   *                             might be empty if isOriginalVersioned is true
+   * @param isOriginalVersioned  true: drop original level from bagPath
+   * @return Failure if at least one of the bags has files with the same bagPath
+   *         otherwise fileInfosForSecondBag as first and only list if both lists have the same files
+   */
+  def checkDuplicates(selectedForFirstBag: Seq[FileInfo],
+                      selectedForSecondBag: Seq[FileInfo],
+                      isOriginalVersioned: Boolean,
+                     ): Try[(Seq[FileInfo], Seq[FileInfo])] = {
+
+    /** @return bagPath -> digestValues */
+    def findDuplicateFiles(fileInfos: Seq[FileInfo]) = fileInfos
+      .groupBy(_.bagPath(isOriginalVersioned))
+      .filter(_._2.size > 1)
+      .mapValues(infos =>
+        infos.map(info =>
+          s"${ info.path }[${ info.fedoraFileId },${ info.maybeDigestValue.getOrElse("") }]"
+        ).mkString("[", ",", "]")
+      )
+
+    val duplicatesForFirstBag = findDuplicateFiles(selectedForFirstBag)
+    val duplicatesForSecondBag = findDuplicateFiles(selectedForSecondBag)
+    if (duplicatesForFirstBag.nonEmpty || duplicatesForSecondBag.nonEmpty) {
+      val prefix1 = "duplicates in first bag: "
+      val prefix2 = "duplicates in second bag: "
+      logDuplicates(prefix1, duplicatesForFirstBag)
+      logDuplicates(prefix2, duplicatesForSecondBag)
+      Failure(InvalidTransformationException(
+        s"$prefix1${ duplicatesForFirstBag.keys.mkString(", ") }; $prefix2${ duplicatesForSecondBag.keys.mkString(", ") } (isOriginalVersioned==$isOriginalVersioned)"
+      ))
+    }
+    else {
+      if (selectedForFirstBag.map(versionedInfo) == selectedForSecondBag.map(versionedInfo))
+        Success((selectedForSecondBag, Seq.empty))
+      else Success((selectedForFirstBag, selectedForSecondBag))
+    }
+  }
+
+  private def versionedInfo(fileInfo: FileInfo): FileInfo = fileInfo.copy(
+    path = fileInfo.bagPath(isOriginalVersioned = true),
+    fedoraFileId = "",
+    accessibleTo = "",
+    visibleTo = "",
+  )
+
+  private def logDuplicates(prefix: String, duplicates: Map[Path, String]): Unit = {
+    if (duplicates.nonEmpty)
+      logger.error(prefix + duplicates.values.mkString("; "))
   }
 }

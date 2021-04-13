@@ -24,6 +24,7 @@ import com.yourmediashelf.fedora.client.{ FedoraClient, FedoraClientException }
 import nl.knaw.dans.bag.ChecksumAlgorithm
 import nl.knaw.dans.bag.v0.DansV0Bag
 import nl.knaw.dans.easy.fedoratobag.Command.FeedBackMessage
+import nl.knaw.dans.easy.fedoratobag.FileInfo.checkDuplicates
 import nl.knaw.dans.easy.fedoratobag.FileItem.{ checkNotImplementedFileMetadata, filesXml }
 import nl.knaw.dans.easy.fedoratobag.FoXml.{ getEmd, _ }
 import nl.knaw.dans.easy.fedoratobag.OutputFormat.OutputFormat
@@ -37,7 +38,7 @@ import org.apache.commons.csv.CSVPrinter
 import org.joda.time.DateTime
 
 import java.io.{ IOException, InputStream }
-import java.nio.file.{ Path, Paths }
+import java.nio.file.Paths
 import java.util.UUID
 import javax.naming.ldap.InitialLdapContext
 import scala.collection.JavaConverters._
@@ -208,9 +209,6 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
       _ <- getMessageFromDepositor(foXml)
         .map(addXmlMetadataTo(bag, "depositor-info/message-from-depositor.txt"))
         .getOrElse(Success(()))
-      _ <- getFilesXml(foXml)
-        .map(addXmlMetadataTo(bag, "original/files.xml"))
-        .getOrElse(Success(()))
       _ <- getAgreementsXml(foXml)
         .map(addAgreementsTo(bag))
         .getOrElse(AgreementsXml(foXml, ldap)
@@ -219,18 +217,20 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
         .getOrElse(Success(()))
       _ <- managedMetadataStream(foXml, "DATASET_LICENSE", bag, "depositor-info/depositor-agreement")
         .getOrElse(Success(()))
+      _ <- getFilesXml(foXml)
+        .map(addXmlMetadataTo(bag, "original/files.xml"))
+        .getOrElse(Success(()))
       isOriginalVersioned = options.transformationType == ORIGINAL_VERSIONED
-      fileInfosForSecondBag = allFileInfos.selectForSecondBag(isOriginalVersioned)
-      fileInfosForFirstBag <- allFileInfos.selectForFirstBag(emdXml, fileInfosForSecondBag.nonEmpty, options.europeana)
-      _ <- checkDuplicateFiles(fileInfosForFirstBag, fileInfosForSecondBag, isOriginalVersioned)
-      _ = logger.debug(s"nextFileInfos = ${ fileInfosForSecondBag.map(_.path) }")
-      fileItemsForFirstBag <- fileInfosForFirstBag.traverse(addPayloadFileTo(bag, isOriginalVersioned))
+      selectedForSecondBag = allFileInfos.selectForSecondBag(isOriginalVersioned)
+      selectedForFirstBag <- allFileInfos.selectForFirstBag(emdXml, selectedForSecondBag.nonEmpty, options.europeana)
+      (forFirstBag, forSecondBag) <- checkDuplicates(selectedForFirstBag, selectedForSecondBag, isOriginalVersioned)
+      fileItemsForFirstBag <- forFirstBag.toList.traverse(addPayloadFileTo(bag, isOriginalVersioned))
       _ <- checkNotImplementedFileMetadata(fileItemsForFirstBag, logger)
       _ <- addXmlMetadataTo(bag, "files.xml")(filesXml(fileItemsForFirstBag))
       _ <- bag.save
       doi = emd.getEmdIdentifier.getDansManagedDoi
       urn = getUrn(datasetId, emd)
-    } yield DatasetInfo(maybeFilterViolations, doi, urn, depositor, fileInfosForSecondBag)
+    } yield DatasetInfo(maybeFilterViolations, doi, urn, depositor, forSecondBag)
   }
 
   private def getUrn(datasetId: DatasetId, emd: EasyMetadataImpl) = {
@@ -266,35 +266,6 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
       .recoverWith {
         case t: Throwable => Failure(new Exception(s"$fedoraFileId ${ t.getMessage }"))
       }
-  }
-
-  private def checkDuplicateFiles(fileInfosForFirstBag: List[FileInfo], fileInfosForSecondBag: List[FileInfo], isOriginalVersioned: Boolean) = {
-    def findDuplicates(fileInfos: List[FileInfo]) = fileInfos
-      .groupBy(_.bagPath(isOriginalVersioned))
-      .filter(_._2.size > 1)
-      .mapValues(infos =>
-        infos.map(info =>
-          s"${ info.path }[${ info.fedoraFileId },${ info.maybeDigestValue.getOrElse("") }]"
-        ).mkString("[", ",", "]")
-      )
-
-    val duplicatesForFirstBag = findDuplicates(fileInfosForFirstBag)
-    val duplicatesForSecondBag = findDuplicates(fileInfosForSecondBag)
-    if (duplicatesForFirstBag.isEmpty && duplicatesForSecondBag.isEmpty) Success(())
-    else {
-      val prefix1 = "duplicates in first bag: "
-      val prefix2 = "duplicates in second bag: "
-      logDuplicates(prefix1, duplicatesForFirstBag)
-      logDuplicates(prefix2, duplicatesForSecondBag)
-      Failure(InvalidTransformationException(
-        s"$prefix1${ duplicatesForFirstBag.keys.mkString(", ") }; $prefix2${ duplicatesForSecondBag.keys.mkString(", ") } (isOriginalVersioned==$isOriginalVersioned)"
-      ))
-    }
-  }
-
-  private def logDuplicates(prefix: String, duplicates: Map[Path, String]): Unit = {
-    if (duplicates.nonEmpty)
-      logger.error(prefix + duplicates.values.mkString("; "))
   }
 
   private def addPayloadFileTo(bag: DansV0Bag, isOriginalVersioned: Boolean)(fileInfo: FileInfo): Try[Node] = {
