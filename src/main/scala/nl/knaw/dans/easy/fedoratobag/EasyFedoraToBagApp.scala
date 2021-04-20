@@ -191,8 +191,11 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
       amd <- getAmd(foXml)
       audiences <- emd.getEmdAudience.getDisciplines.asScala
         .map(id => getAudience(id.getValue)).collectResults
+      _ = trace("creating DDM from EMD")
       ddm <- DDM(emd, audiences, configuration.abrMapping)
-      fedoraIDs <- fedoraProvider.getSubordinates(datasetId)
+      _ = trace("created DDM from EMD")
+      fedoraIDs <- if (options.noPayload) Success(Seq.empty)
+                   else fedoraProvider.getSubordinates(datasetId)
       allFileInfos <- fedoraIDs.filter(_.startsWith("easy-file:")).toList.traverse(getFileInfo)
       maybeFilterViolations <- options.datasetFilter.violations(emd, ddm, amd, fedoraIDs, allFileInfos)
       _ = if (options.strict) maybeFilterViolations.foreach(msg => throw InvalidTransformationException(msg))
@@ -260,6 +263,7 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
   }
 
   private def getFileInfo(fedoraFileId: String): Try[FileInfo] = {
+    trace(fedoraFileId)
     fedoraProvider
       .loadFoXml(fedoraFileId)
       .flatMap(FileInfo(_))
@@ -269,6 +273,7 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
   }
 
   private def addPayloadFileTo(bag: DansV0Bag, isOriginalVersioned: Boolean)(fileInfo: FileInfo): Try[Node] = {
+    trace(fileInfo)
     val target = fileInfo.bagPath(isOriginalVersioned)
     val file = bag.baseDir / "data" / target.toString
     for {
@@ -283,6 +288,7 @@ class EasyFedoraToBagApp(configuration: Configuration) extends DebugEnhancedLogg
   }
 
   private def verifyChecksums(file: File, fedoraValue: Option[String], bagValue: Option[String]) = {
+    trace(file, fedoraValue, bagValue)
     (bagValue, fedoraValue) match {
       case (Some(b), Some(f)) if f == b => Success(())
       case (Some(_), Some(_)) => Failure(new Exception(

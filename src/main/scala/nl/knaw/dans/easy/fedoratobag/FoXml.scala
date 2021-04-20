@@ -15,24 +15,29 @@
  */
 package nl.knaw.dans.easy.fedoratobag
 
+import nl.knaw.dans.lib.logging.DebugEnhancedLogging
+
 import scala.util.Try
 import scala.xml.Node
 
-object FoXml {
+object FoXml extends DebugEnhancedLogging {
 
-  private def getStream(streamId: String, rootTag: String, foXml: Node): Try[Node] = Try {
-    val node = getStreamRoot(streamId, foXml)
-      .filter(hasControlGroup("X"))
-      .getOrElse(throw new Exception(s"Stream with ID=$streamId and CONTROL_GROUP=X not found"))
+  private def getStream(streamId: String, rootTag: String, foXml: Node): Try[Node] = {
+    Try {
+      val node = getStreamRoot(streamId, foXml)
+        .filter(hasControlGroup("X"))
+        .getOrElse(throw new Exception(s"Stream with ID=$streamId and CONTROL_GROUP=X not found"))
 
-    (node \\ "xmlContent")
-      .last
-      .descendant
-      .filter(_.label == rootTag)
-      .last
+      (node \\ "xmlContent")
+        .last
+        .descendant
+        .filter(_.label == rootTag)
+        .last
+    }
   }
 
   def getStreamRoot(streamId: String, foXml: Node): Option[Node] = {
+    trace(streamId)
     (foXml \ "datastream")
       .theSeq
       .filter(n => n \@ "ID" == streamId)
@@ -64,6 +69,7 @@ object FoXml {
   def getMessageFromDepositor(foXml: Node): Option[Node] = getStreamRoot("message-from-depositor.txt", foXml)
 
   def managedStreamLabel(foXml: Node, id: String): Option[String] = {
+    trace(id)
     getStreamRoot(id, foXml)
       .withFilter(hasControlGroup("M"))
       .flatMap(getLabel)
