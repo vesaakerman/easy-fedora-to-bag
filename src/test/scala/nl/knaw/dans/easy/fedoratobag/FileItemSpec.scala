@@ -16,18 +16,81 @@
 package nl.knaw.dans.easy.fedoratobag
 
 import com.typesafe.scalalogging.Logger
-import nl.knaw.dans.easy.fedoratobag.fixture.{ SchemaSupport, TestSupportFixture }
+import nl.knaw.dans.easy.fedoratobag.fixture.{ FileFoXmlSupport, SchemaSupport, TestSupportFixture }
 import org.scalamock.scalatest.MockFactory
 import org.slf4j.{ Logger => UnderlyingLogger }
 
 import scala.util.{ Failure, Success }
 import scala.xml.Utility.trim
-import scala.xml.{ Node, NodeBuffer }
+import scala.xml._
 
-class FileItemSpec extends TestSupportFixture with MockFactory with SchemaSupport {
-  val schema = "https://easy.dans.knaw.nl/schemas/bag/metadata/files/files.xsd"
+class FileItemSpec extends TestSupportFixture with MockFactory with SchemaSupport with FileFoXmlSupport {
+  val ns = "http://easy.dans.knaw.nl/schemas/bag/metadata/files/"
+  val schema: String = ns + "files.xsd"
+  val location = s"$ns $schema"
 
   private def validateItem(item: Node) = validate(FileItem.filesXml(Seq(item)))
+
+  private val derivedFiles = callFileInfo(Map(
+    "easy-file:2" -> fileFoXml(id = 2, name = "so:me.xslx", creatorRole = "ARCHIVIST"),
+    "easy-file:25" -> fileFoXml(id = 25, location = "cu*rated", name = "so:me.csv", derivedFrom = Some(2)),
+  )).getOrElse(fail("could not load test data"))
+
+  "filesXml" should "drop original in <dct:source>" in {
+    val fileItems = derivedFiles.map(FileItem(_, isOriginalVersioned = true).get)
+    normalized(FileItem.filesXml(fileItems)) shouldBe normalized(
+      <files xsi:schemaLocation={ location } xmlns={ ns }>
+        <file filepath="data/so_me.xslx">
+          <!--original/so_me.xslx-->
+          <dct:identifier>easy-file:2</dct:identifier>
+          <dct:title>so_me.xslx</dct:title>
+          <dct:format>text/plain</dct:format>
+          <dct:extent>0.0MB</dct:extent>
+          <accessibleToRights>RESTRICTED_REQUEST</accessibleToRights>
+          <visibleToRights>ANONYMOUS</visibleToRights>
+        </file>
+        <file filepath="data/cu_rated/so_me.csv"><dct:identifier>easy-file:25</dct:identifier>
+          <dct:title>so_me.csv</dct:title>
+          <dct:format>text/plain</dct:format>
+          <dct:extent>0.0MB</dct:extent>
+          <accessibleToRights>RESTRICTED_REQUEST</accessibleToRights>
+          <visibleToRights>ANONYMOUS</visibleToRights>
+          <dct:source>data/so_me.xslx</dct:source>
+        </file>
+      </files>
+    )
+  }
+  it should "keep original in <dct:source>" in {
+    val fileItems = derivedFiles.map(FileItem(_, isOriginalVersioned = false).get)
+    normalized(FileItem.filesXml(fileItems)) shouldBe normalized(
+      <files xsi:schemaLocation={ location } xmlns={ ns }>
+        <file filepath="data/original/so_me.xslx">
+          <dct:identifier>easy-file:2</dct:identifier>
+          <dct:title>so_me.xslx</dct:title>
+          <dct:format>text/plain</dct:format>
+          <dct:extent>0.0MB</dct:extent>
+          <accessibleToRights>RESTRICTED_REQUEST</accessibleToRights>
+          <visibleToRights>ANONYMOUS</visibleToRights>
+        </file><file filepath="data/cu_rated/so_me.csv">
+          <dct:identifier>easy-file:25</dct:identifier>
+          <dct:title>so_me.csv</dct:title>
+          <dct:format>text/plain</dct:format>
+          <dct:extent>0.0MB</dct:extent>
+          <accessibleToRights>RESTRICTED_REQUEST</accessibleToRights>
+          <visibleToRights>ANONYMOUS</visibleToRights>
+          <dct:source>data/original/so_me.xslx</dct:source>
+        </file>
+      </files>
+    )
+  }
+
+  // TODO share with DdmSpec
+  private def normalized(elem: Node) = new PrettyPrinter(160, 2)
+    .format(Utility.trim(elem)) // this trim normalizes <a/> and <a></a>
+    .replaceAll(nameSpaceRegExp, "") // the random order would cause differences in actual and expected
+    .replaceAll(" +\n?", " ")
+    .replaceAll("\n +<", "\n<")
+    .trim
 
   "apply" should "copy both types of rights" in {
     val fileMetadata = <name>something.txt</name>
@@ -37,11 +100,10 @@ class FileItemSpec extends TestSupportFixture with MockFactory with SchemaSuppor
                        <creatorRole>DEPOSITOR</creatorRole>
                        <visibleTo>ANONYMOUS</visibleTo>
                        <accessibleTo>RESTRICTED_REQUEST</accessibleTo>
+    val fileInfo = createFileInfo(fileMetadata)
 
-    val triedFileItem = FileInfo(fileFoXml(fileMetadata))
-      .flatMap(FileItem(_, isOriginalVersioned = false))
-      .map(trim)
-    triedFileItem shouldBe Success(trim(
+    val triedFileItem = FileItem(fileInfo, isOriginalVersioned = false)
+    triedFileItem.map(trim) shouldBe Success(trim(
       <file filepath="data/original/something.txt">
         <dct:identifier>easy-file:35</dct:identifier>
         <dct:title>something.txt</dct:title>
@@ -61,10 +123,9 @@ class FileItemSpec extends TestSupportFixture with MockFactory with SchemaSuppor
                        <size>100000</size>
                        <mimeType>text/plain</mimeType>
                        <visibleTo>NONE</visibleTo>
+    val fileInfo = createFileInfo(fileMetadata)
 
-    val triedFileItem = FileInfo(fileFoXml(fileMetadata))
-      .flatMap(FileItem(_, isOriginalVersioned = false))
-      .map(trim)
+    val triedFileItem = FileItem(fileInfo, isOriginalVersioned = false)
     triedFileItem.map(trim) shouldBe Success(trim(
       <file filepath="data/original/something.txt">
         <dct:identifier>easy-file:35</dct:identifier>
@@ -83,13 +144,13 @@ class FileItemSpec extends TestSupportFixture with MockFactory with SchemaSuppor
     val fileMetadata = <name>something.txt</name>
                        <path>original/something.txt</path>
                        <mimeType>text/plain</mimeType>
+                       <size>30</size>
                        <visibleTo>ANONYMOUS</visibleTo>
-
-    FileInfo(fileFoXml(fileMetadata))
-      .flatMap(FileItem(_, isOriginalVersioned = false))
-      .map(trim) should matchPattern {
+    callFileInfo(Map(
+      "easy-file:35" -> fileFoXml(fileMetadata),
+    )) should matchPattern {
       case Failure(e: Exception) if e.getMessage ==
-        "<accessibleTo> not found" =>
+        "easy-file:35 <accessibleTo> not found" =>
     }
   }
 
@@ -126,10 +187,9 @@ class FileItemSpec extends TestSupportFixture with MockFactory with SchemaSuppor
           </addmd:additional>
       </addmd:additional-metadata>
     }
+    val fileInfo = createFileInfo(fileMetadata)
 
-    val triedFileItem = FileInfo(fileFoXml(fileMetadata))
-      .flatMap(FileItem(_, isOriginalVersioned = false))
-      .map(trim)
+    val triedFileItem = FileItem(fileInfo, isOriginalVersioned = false)
     triedFileItem.map(trim) shouldBe Success(trim(
       <file filepath="data/Fotos/R0011867.jpg">
           <dct:identifier>easy-file:35</dct:identifier>
@@ -182,10 +242,9 @@ class FileItemSpec extends TestSupportFixture with MockFactory with SchemaSuppor
           </addmd:additional>
       </addmd:additional-metadata>
     }
+    val fileInfo = createFileInfo(fileMetadata)
 
-    val triedFileItem = FileInfo(fileFoXml(fileMetadata))
-      .flatMap(FileItem(_, isOriginalVersioned = false))
-      .map(trim)
+    val triedFileItem = FileItem(fileInfo, isOriginalVersioned = false)
     triedFileItem.map(trim) shouldBe Success(trim(
       <file filepath="data/Fotos/R0011867.jpg">
           <dct:identifier>easy-file:35</dct:identifier>
@@ -230,12 +289,11 @@ class FileItemSpec extends TestSupportFixture with MockFactory with SchemaSuppor
         </addmd:additional>
       </addmd:additional-metadata>
    }
+    val fileInfo = createFileInfo(fileMetadata)
 
     // note that we have two times <dct:title>,
     // once from <name>, once from <addmd:additional-metadata><file_name>
-    val triedFileItem = FileInfo(fileFoXml(fileMetadata))
-      .flatMap(FileItem(_, isOriginalVersioned = false))
-      .map(trim)
+    val triedFileItem = FileItem(fileInfo, isOriginalVersioned = false)
     triedFileItem.map(trim) shouldBe Success(trim(
       <file filepath="data/GIS/SKKJ6_spoor.mif">
         <dct:identifier>easy-file:35</dct:identifier>
@@ -285,10 +343,9 @@ class FileItemSpec extends TestSupportFixture with MockFactory with SchemaSuppor
         </addmd:additional>
       </addmd:additional-metadata>
     }
+    val fileInfo = createFileInfo(fileMetadata)
 
-    val triedFileItem = FileInfo(fileFoXml(fileMetadata))
-      .flatMap(FileItem(_, isOriginalVersioned = false))
-      .map(trim)
+    val triedFileItem = FileItem(fileInfo, isOriginalVersioned = false)
     triedFileItem.map(trim) shouldBe Success(trim(
       <file filepath="data/B">
           <dct:identifier>easy-file:35</dct:identifier>
@@ -332,10 +389,9 @@ class FileItemSpec extends TestSupportFixture with MockFactory with SchemaSuppor
         </addmd:additional>
       </addmd:additional-metadata>
     }
+    val fileInfo = createFileInfo(fileMetadata)
 
-    val triedFileItem = FileInfo(fileFoXml(fileMetadata))
-      .flatMap(FileItem(_, isOriginalVersioned = false))
-      .map(trim)
+    val triedFileItem = FileItem(fileInfo, isOriginalVersioned = false)
     triedFileItem.map(trim) shouldBe Success(trim(
       <file filepath="data/B">
           <dct:identifier>easy-file:35</dct:identifier>
@@ -390,6 +446,21 @@ class FileItemSpec extends TestSupportFixture with MockFactory with SchemaSuppor
     FileItem.checkNotImplementedFileMetadata(items.toList, Logger(mockLogger)) should matchPattern {
       case Failure(e) if e.getMessage == "2 file(s) with not implemented additional file metadata: List(analytic_units, mapprojection, opmerkingen)" =>
     }
+  }
+
+  private def createFileInfo(fileMetadata: NodeBuffer) = {
+    callFileInfo(Map(
+      "easy-file:35" -> fileFoXml(fileMetadata),
+    )).map(_.head).getOrElse(fail("could not load test data"))
+  }
+
+  private def callFileInfo(foXMLs: Map[Depositor, Elem]) = {
+    val fedoraProvider = mock[FedoraProvider]
+    foXMLs.foreach { case (id, xml) =>
+      (fedoraProvider.loadFoXml(_: String)) expects id once() returning Success(xml)
+    }
+    val triedFileInfos = FileInfo(foXMLs.keys.toList, fedoraProvider)
+    triedFileInfos
   }
 
   private def fileFoXml(fileMetadata: NodeBuffer) = {

@@ -15,6 +15,9 @@
  */
 package nl.knaw.dans.easy.fedoratobag
 
+import cats.implicits.catsStdInstancesForTry
+import cats.instances.list._
+import cats.syntax.traverse._
 import nl.knaw.dans.easy.fedoratobag.filter.InvalidTransformationException
 import nl.knaw.dans.lib.logging.DebugEnhancedLogging
 
@@ -31,50 +34,93 @@ case class FileInfo(fedoraFileId: String,
                     visibleTo: String,
                     contentDigest: Option[Node],
                     additionalMetadata: Option[Node],
+                    wasDerivedForm: Option[Path] = None,
                    ) {
   private val isAccessible: Boolean = accessibleTo.toUpperCase() != "NONE"
-  val isOriginal: Boolean = path.getName(0).toString.toLowerCase == "original"
+  val isOriginal: Boolean = startsWithOriginalFolder(path)
   val isAccessibleOriginal: Boolean = isOriginal && isAccessible
   val maybeDigestType: Option[String] = contentDigest.map(n => (n \\ "@TYPE").text)
   val maybeDigestValue: Option[String] = contentDigest.map(n => (n \\ "@DIGEST").text)
 
-  def bagPath(isOriginalVersioned: Boolean): Path =
-    if (isOriginalVersioned && isOriginal) path.subpath(1, path.getNameCount)
+  private def startsWithOriginalFolder(path: Path) = {
+    path.getName(0).toString.toLowerCase == "original"
+  }
+
+  private def fixedPath(path: Path, isOriginalVersioned: Boolean) = {
+    if (isOriginalVersioned && startsWithOriginalFolder(path))
+      path.subpath(1, path.getNameCount)
     else path
+  }
+
+  def bagSource(isOriginalVersioned: Boolean): Option[Path] = wasDerivedForm
+    .map(fixedPath(_, isOriginalVersioned))
+
+  def bagPath(isOriginalVersioned: Boolean): Path = {
+    fixedPath(path, isOriginalVersioned)
+  }
 }
 
 object FileInfo extends DebugEnhancedLogging {
-  val nonAllowedCharacters = List(':', '*', '?', '"', '<', '>', '|', ';', '#')
+  private val nonAllowedCharacters = List(':', '*', '?', '"', '<', '>', '|', ';', '#')
 
-  def replaceNonAllowedCharacters(s: String): String = {
+  private def replaceNonAllowedCharacters(s: String): String = {
     s.map(char => if (nonAllowedCharacters.contains(char)) '_'
                   else char)
   }
 
-  def apply(foXml: Node): Try[FileInfo] = {
-    FoXml.getFileMD(foXml).map { fileMetadata =>
-      def get(tag: String) = (fileMetadata \\ tag)
-        .map(_.text)
-        .headOption
-        .getOrElse(throw new Exception(s"<$tag> not found"))
+  def apply(fedoraIDs: Seq[String], fedoraProvider: FedoraProvider): Try[Seq[FileInfo]] = {
 
-      val visibleTo = get("visibleTo")
-      val accessibleTo = visibleTo.toUpperCase() match {
-        case "NONE" => "NONE"
-        case _ => get("accessibleTo")
+    def digestValue(foXmlStream: Option[Node]): Option[Node] = foXmlStream
+      .map(_ \\ "contentDigest").flatMap(_.headOption)
+
+    def derivedFrom(foXmlStream: Option[Node]): Option[String] = {
+      foXmlStream
+        .flatMap(n => (n \\ "wasDerivedFrom").headOption).toSeq
+        .flatMap(node =>
+          node.attribute("http://www.w3.org/1999/02/22-rdf-syntax-ns#", "resource")
+            .toSeq.flatten
+            .map(_.text.replace("info:fedora/", ""))
+        ).headOption
+    }
+
+    fedoraIDs
+      .filter(_.startsWith("easy-file:")).toList
+      .traverse { fileId =>
+        for {
+          foXml <- fedoraProvider.loadFoXml(fileId)
+          fileMetadata <- FoXml.getFileMD(foXml)
+          derivedFromId = derivedFrom(FoXml.getStreamRoot("RELS-EXT", foXml))
+          digest = digestValue(FoXml.getStreamRoot("EASY_FILE", foXml))
+          path = (fileMetadata \\ "path").map(_.text).headOption
+            .map(p => Paths.get(replaceNonAllowedCharacters(p)))
+        } yield (fileId, derivedFromId, digest, fileMetadata, path)
+      }.map { files =>
+      val pathMap = files.map {
+        case (fileId, _, _, _, maybePath) => fileId -> maybePath}.toMap
+      files.map {
+        case (fileId, _, _, _, None) =>
+          throw new Exception(s"<path> not found for $fileId")
+        case (fileId, derivedFrom, digest, fileMetadata, Some(path)) =>
+          def get(tag: String) = (fileMetadata \\ tag)
+            .map(_.text)
+            .headOption
+            .getOrElse(throw new Exception(s"$fileId <$tag> not found"))
+
+          val visibleTo = get("visibleTo")
+          val accessibleTo = if ("NONE" == visibleTo.toUpperCase) "NONE"
+                             else get("accessibleTo")
+          new FileInfo(
+            fileId, path,
+            replaceNonAllowedCharacters(get("name")),
+            get("size").toLong,
+            get("mimeType"),
+            accessibleTo,
+            visibleTo,
+            digest,
+            (fileMetadata \ "additional-metadata" \ "additional" \ "content").headOption,
+            derivedFrom.flatMap(pathMap), // TODO error handling
+          )
       }
-
-      new FileInfo(
-        foXml \@ "PID",
-        Paths.get(replaceNonAllowedCharacters(get("path"))),
-        replaceNonAllowedCharacters(get("name")),
-        get("size").toLong,
-        get("mimeType"),
-        accessibleTo,
-        visibleTo,
-        FoXml.getStreamRoot("EASY_FILE", foXml).map(_ \\ "contentDigest").flatMap(_.headOption),
-        (fileMetadata \ "additional-metadata" \ "additional" \ "content").headOption
-      )
     }
   }
 
