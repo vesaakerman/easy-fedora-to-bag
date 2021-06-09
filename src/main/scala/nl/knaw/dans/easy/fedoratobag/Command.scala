@@ -83,7 +83,7 @@ object Command extends App with DebugEnhancedLogging {
     commandLine.skipDatasets.toOption.foreach(file => {
       file
         .lineIterator
-        .foreach(dataset => skip += dataset)
+        .foreach(skip += _)
     })
 
     commandLine
