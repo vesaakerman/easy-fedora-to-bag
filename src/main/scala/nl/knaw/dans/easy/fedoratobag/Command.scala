@@ -79,13 +79,7 @@ object Command extends App with DebugEnhancedLogging {
   }
 
   private def datasetIds: Iterator[DatasetId] = {
-    val skip = ListBuffer[String]()
-    commandLine.skipDatasets.toOption.foreach(file => {
-      file
-        .lineIterator
-        .foreach(skip += _)
-    })
-
+    val skip = commandLine.skipDatasets.toOption.toList.flatMap(_.lines)
     commandLine
       .datasetId.map(Iterator(_))
       .getOrElse(commandLine

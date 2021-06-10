@@ -64,9 +64,8 @@ EXAMPLES
         Creates bags for all dataset-ids in dataset_ids.txt using the 'simple' transformation.
         The payload consists of only one file, the largest PDF or image in the datasets.
 
-    $ easy-fedora-to-bag -i dataset_ids.txt --skip-list skip_dataset_ids.txt -f SIP -o ./stagedSIPs -e simple
+    $ easy-fedora-to-bag -i dataset_ids.txt --skip-list skip_dataset_ids.txt -f SIP -o ./stagedSIPs simple
         Creates bags for all dataset-ids in dataset_ids.txt, but skipping the datasets in skip_dataset_ids.txt.
-        The payload consists of only one file, the largest PDF or image in the datasets.
 
     $ easy-fedora-to-bag -i dataset_ids.txt fedora-versioned
         Dry run, each line in the log-file will contain one or more dataset IDs.
